@@ -23,8 +23,7 @@ st.set_page_config(page_title="ETF 배당 백테스트", layout="wide")
 st.title("📊 ETF 배당 시뮬레이터")
 
 # ==========================================
-# [중요] 보안을 위해 실제 키는 삭제하고 
-# Streamlit Secrets에서 불러오는 방식으로 수정
+# API 키 설정
 # ==========================================
 try:
     KIS_APP_KEY = st.secrets["KIS_APP_KEY"]
@@ -33,7 +32,7 @@ except:
     KIS_APP_KEY = "YOUR_APP_KEY_HERE"
     KIS_APP_SECRET = "YOUR_APP_SECRET_HERE"
 
-KIS_TOKEN = None  # <-- 들여쓰기 없이 왼쪽 끝에 잘 붙여두었습니다!
+KIS_TOKEN = None
 
 # ==========================================
 # 함수 정의부
@@ -85,28 +84,22 @@ def fetch_kis_prices(code, start_year, end_year, token):
     return pd.Series(all_prices).sort_index()
 
 # ==========================================
-# [핵심 추가] 분배금 파일 저장(캐싱) 로직
-# 서버 하드디스크에 JSON 파일로 저장하여 재사용합니다.
+# 분배금 파일 저장(캐싱) 로직
 # ==========================================
 def scrape_dividend_data(code, years_tuple):
     years = list(years_tuple)
     file_path = f"dividend_data_{code}.json"
     
-    # 1. 저장된 파일이 있는지 확인
     if os.path.exists(file_path):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 cached_data = json.load(f)
             parsed_cache = {int(k): v for k, v in cached_data.items()}
-            
-            # 요청한 연도 데이터가 파일에 모두 있다면 크롬 켜지 않고 즉시 리턴
             has_all_years = all(y in parsed_cache for y in years)
             if has_all_years:
                 return parsed_cache
-        except:
-            pass
+        except: pass
 
-    # 2. 파일이 없거나 데이터가 부족하면 셀레니움으로 수집
     div_map = {y: [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)] for y in years}
     driver = None
     try:
@@ -161,19 +154,16 @@ def scrape_dividend_data(code, years_tuple):
     finally:
         if driver: driver.quit()
 
-    # 3. 비어있는 달은 기본값 처리 (안전망)
     for y in years:
         y_has_data = any(item['val'] > 0 for item in div_map[y])
         if not y_has_data:
             if code == '498400': div_map[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
             elif code == '472150': div_map[y] = [{'val':250, 'pay_day':2, 'reinv_day':3, 'yield':0.0} for _ in range(12)]
 
-    # 4. 수집된 데이터를 파일로 저장
     try:
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(div_map, f, ensure_ascii=False, indent=4)
-    except:
-        pass
+    except: pass
 
     return div_map
 
@@ -188,7 +178,6 @@ def fetch_all_years_data(code, years, token, is_etf=True):
         div_map = {y: [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)] for y in years}
         return prices, div_map
     
-    # 여기서 영구 저장 파일 캐싱 함수를 호출합니다!
     div_map = scrape_dividend_data(code, tuple(years))
     return prices, div_map
 
@@ -315,8 +304,8 @@ if run_btn:
                         cash -= (add*p); k_sh += add
                         log(y, m, d_reinv, "재투자", K_CODE, p, add, add*p, 0, cash, k_sh*p)
                 
-                d_last = k_p[k_p.index.month == m].index[-1] if (not k_p.empty and isinstance(k_p.index, pd.DatetimeIndex) and not k_p[k_p.index.month == m].empty) else None
-                if d_last: log(y, m, d_last, "평가", K_CODE, int(k_p.loc[d_last]), k_sh, 0, 0, cash, k_sh*int(k_p.loc[d_last]))
+                d_last_k = k_p[k_p.index.month == m].index[-1] if (not k_p.empty and isinstance(k_p.index, pd.DatetimeIndex) and not k_p[k_p.index.month == m].empty) else None
+                if d_last_k: log(y, m, d_last_k, "평가", K_CODE, int(k_p.loc[d_last_k]), k_sh, 0, 0, cash, k_sh*int(k_p.loc[d_last_k]))
 
             elif RUN_MODE == 'SWING':
                 d_t_pay = get_d(t_p, t_d['pay_day']) if t_d else None
@@ -348,19 +337,32 @@ if run_btn:
                     f = k_p.index[k_p.index > d_k_pay]
                     d_k_sell = f[0] if not f.empty and f[0].month == m else d_k_pay
 
+                # [중요 수정] KODEX 매도 후 TIGER 매수 시, 에러(KeyError)를 방지하는 안전한 가격 검색 로직
                 if d_k_sell and k_sh > 0:
                     p = int(k_p.loc[d_k_sell]); sell = k_sh * p; cash += sell
                     log(y, m, d_k_sell, "매도", K_CODE, p, k_sh, sell, 0, cash, 0); k_sh = 0
                     
-                    p_t = int(t_p.loc[d_k_sell]) if not t_p[t_p.index >= d_k_sell].empty else 0
-                    if p_t > 0:
-                        t_sh = cash // p_t; cash -= (t_sh*p_t)
-                        log(y, m, d_k_sell, "매수", T_CODE, p_t, t_sh, t_sh*p_t, 0, cash, t_sh*p_t)
+                    if not t_p.empty and isinstance(t_p.index, pd.DatetimeIndex):
+                        f_t = t_p.index[t_p.index >= d_k_sell]
+                        if not f_t.empty:
+                            d_t_buy = f_t[0]
+                            p_t = int(t_p.loc[d_t_buy])
+                            if p_t > 0:
+                                t_sh = cash // p_t; cash -= (t_sh*p_t)
+                                log(y, m, d_k_sell, "매수", T_CODE, p_t, t_sh, t_sh*p_t, 0, cash, t_sh*p_t)
                 
-                d_last = k_p[k_p.index.month == m].index[-1] if (not k_p.empty and isinstance(k_p.index, pd.DatetimeIndex) and not k_p[k_p.index.month == m].empty) else None
-                if d_last:
-                    if t_sh > 0: p = int(t_p.loc[d_last]); log(y, m, d_last, "평가", T_CODE, p, t_sh, 0, 0, cash, t_sh*p)
-                    elif k_sh > 0: p = int(k_p.loc[d_last]); log(y, m, d_last, "평가", K_CODE, p, k_sh, 0, 0, cash, k_sh*p)
+                # [중요 수정] 월말 평가 시에도 각 종목의 고유 날짜를 참조하여 KeyError 방지
+                k_p_m = k_p[k_p.index.month == m] if isinstance(k_p.index, pd.DatetimeIndex) else pd.Series()
+                t_p_m = t_p[t_p.index.month == m] if isinstance(t_p.index, pd.DatetimeIndex) else pd.Series()
+                d_last_k = k_p_m.index[-1] if not k_p_m.empty else None
+                d_last_t = t_p_m.index[-1] if not t_p_m.empty else None
+
+                if t_sh > 0 and d_last_t:
+                    p = int(t_p.loc[d_last_t])
+                    log(y, m, d_last_t, "평가", T_CODE, p, t_sh, 0, 0, cash, t_sh*p)
+                elif k_sh > 0 and d_last_k:
+                    p = int(k_p.loc[d_last_k])
+                    log(y, m, d_last_k, "평가", K_CODE, p, k_sh, 0, 0, cash, k_sh*p)
 
         df_hist = pd.DataFrame(history)
 
