@@ -53,31 +53,30 @@ def fetch_actual_prices(code, start_date, end_date):
     """네이버 증권 일별 시세표에서 실제 종가(수정주가 미적용) 수집"""
     if not code: return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
     
-    # 캐시 파일명 변경 (기존 수정주가 캐시와 충돌 방지)
     price_file = f"price_market_naver_unadj_{code}.json"
     if os.path.exists(price_file):
         try:
             with open(price_file, "r") as f:
                 cached = json.load(f)
-            series = pd.Series({pd.to_datetime(k): v for k, v in cached.items()}).sort_index()
-            if not series.empty and series.index[0] <= start_date and series.index[-1] >= end_date: 
-                return series
+            # 캐시가 비어있지 않은 경우에만 로드 (빈 데이터로 인한 에러 방지)
+            if cached:
+                series = pd.Series({pd.to_datetime(k): v for k, v in cached.items()}).sort_index()
+                if not series.empty and series.index[0] <= start_date and series.index[-1] >= end_date: 
+                    return series
         except: pass
 
     all_prices = {}
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     stop_flag = False
     
-    # 최대 300페이지(약 3000거래일 = 12년치) 탐색
     for page in range(1, 301):
         url = f"https://finance.naver.com/item/sise_day.naver?code={code}&page={page}"
         try:
             res = requests.get(url, headers=headers)
-            res.encoding = 'euc-kr' # 네이버 금융 한글 깨짐 방지
+            res.encoding = 'euc-kr' 
             
-            # pandas의 read_html로 표 데이터 즉시 파싱
             df_page = pd.read_html(io.StringIO(res.text), header=0)[0]
-            df_page = df_page.dropna() # 빈 줄 제거
+            df_page = df_page.dropna() 
             
             if df_page.empty:
                 break
@@ -89,7 +88,6 @@ def fetch_actual_prices(code, start_date, end_date):
                 
                 all_prices[dt] = price
                 
-                # 요청한 시작일보다 과거 데이터가 충분히 수집되면 중단
                 if dt < start_date - pd.Timedelta(days=10):
                     stop_flag = True
                     break
@@ -100,6 +98,10 @@ def fetch_actual_prices(code, start_date, end_date):
         except Exception as e:
             break
             
+    # [핵심] 데이터가 전혀 수집되지 않은 경우, AttributeError 방지를 위해 명시적으로 비어있는 DatetimeIndex 반환
+    if not all_prices:
+        return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+        
     price_series = pd.Series(all_prices).sort_index()
     
     try:
