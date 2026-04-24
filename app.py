@@ -60,7 +60,6 @@ def fetch_stock_name(code, token):
 def fetch_actual_prices(code, start_date, end_date, token):
     if not code: return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
     
-    # [중요] v6 캐시 적용 - 14,050원 실제 종가 강제 동기화
     price_file = f"price_market_v6_{code}.json"
     if os.path.exists(price_file):
         try:
@@ -76,7 +75,6 @@ def fetch_actual_prices(code, start_date, end_date, token):
     current_end = e_dt
     
     while True:
-        # FID_ORG_ADJ_PRC: "0" (반드시 실제 시장가 종가 사용)
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": s_dt, "FID_INPUT_DATE_2": current_end, "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"} 
         try:
             res = requests.get(url, headers=headers, params=params)
@@ -212,10 +210,10 @@ if run_btn:
         K_NAME_RAW = fetch_stock_name(K_CODE, KIS_TOKEN)
         T_NAME_RAW = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
         
-        # [수정] 요청하신 상단 타이틀 형식 적용
+        # [수정] 상단 타이틀 형식 원래대로 원복
         display_name = f"{K_NAME_RAW.split(' (')[0]}"
         if T_CODE: display_name += f", {T_NAME_RAW.split(' (')[0]}"
-        st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 백테스트 리포트")
+        st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 리포트")
         
         k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts, KIS_TOKEN)
         t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts, KIS_TOKEN) if T_CODE else pd.Series(dtype=float)
@@ -224,136 +222,102 @@ if run_btn:
 
         history, cash, k_sh, t_sh, total_div, first_buy = [], INITIAL_CASH, 0, 0, 0, False
 
-        def get_safe_price(ps, y, m, d, after=False):
+        def get_safe_price(ps, y, m, d):
             if ps.empty: return None, None
             target_dt = pd.Timestamp(y, m, d)
-            if after:
-                found = ps.index[ps.index > target_dt]
-            else:
-                found = ps.index[ps.index >= target_dt]
+            found = ps.index[ps.index >= target_dt]
             if not found.empty and found[0].year == y and found[0].month == m:
                 return (found[0], int(ps.loc[found[0]]))
             return (None, None)
 
         for y, m in target_ym:
-            k_d, t_d = k_divs_all[y][m-1], t_divs_all.get(y, [None]*12)[m-1] if T_CODE else None
+            k_d = k_divs_all[y][m-1]
+            t_d = t_divs_all.get(y, [None]*12)[m-1] if T_CODE else None
             
-            # T 배당 및 재투자(익일 매수) 로직
-            if T_CODE and t_sh > 0:
-                if t_d['val'] > 0:
-                    dt, p = get_safe_price(t_prices_all, y, m, t_d['pay_day'])
+            # ===============================================
+            # [수정] 단일 종목 (SINGLE) 모드 로직 보완 (재투자 포함)
+            # ===============================================
+            if not T_CODE:
+                if not first_buy:
+                    dt, p = get_safe_price(k_prices_all, y, m, 1)
                     if dt:
-                        dv = t_sh * t_d['val']; cash += dv; total_div += dv
-                        history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':T_CODE,'단가':t_d['val'],'수량':t_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(t_sh*p),'배당률':t_d['yield']})
-                
-                dt_s, p_s = get_safe_price(t_prices_all, y, m, t_d['reinv_day'], after=True)
-                if dt_s:
-                    sell_amt = t_sh * p_s; cash += sell_amt
-                    history.append({'연도':y,'월':f"{m}월",'날짜':dt_s.strftime('%y/%m/%d'),'구분':'매도','종목':T_CODE,'단가':p_s,'수량':t_sh,'거래금액':sell_amt,'수령배당금':0,'현금잔고':cash,'총자산':cash,'배당률':0.0}); t_sh = 0
-                    dt_k, p_k = get_safe_price(k_prices_all, dt_s.year, dt_s.month, dt_s.day)
-                    if dt_k:
-                        k_sh = cash // p_k; cash -= (k_sh*p_k)
-                        history.append({'연도':y,'월':f"{m}월",'날짜':dt_k.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p_k,'수량':k_sh,'거래금액':k_sh*p_k,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_k),'배당률':0.0})
+                        k_sh = cash // p; cash -= (k_sh*p); first_buy = True
+                        history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p,'수량':k_sh,'거래금액':k_sh*p,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':0.0})
 
-            if not first_buy:
-                dt, p = get_safe_price(k_prices_all, y, m, 1)
-                if dt:
-                    k_sh = cash // p; cash -= (k_sh*p); first_buy = True
-                    history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p,'수량':k_sh,'거래금액':k_sh*p,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':0.0})
-
-            # K 배당 및 재투자(익일 매수) 로직
-            if k_sh > 0:
-                if k_d['val'] > 0:
+                dt_pay = None
+                if k_sh > 0 and k_d['val'] > 0:
                     dt, p = get_safe_price(k_prices_all, y, m, k_d['pay_day'])
                     if dt:
+                        dt_pay = dt
                         dv = k_sh * k_d['val']; cash += dv; total_div += dv
                         history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':K_CODE,'단가':k_d['val'],'수량':k_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':k_d['yield']})
-                if T_CODE:
-                    dt_s, p_s = get_safe_price(k_prices_all, y, m, k_d['reinv_day'], after=True)
-                    if dt_s:
-                        sell_amt = k_sh * p_s; cash += sell_amt
-                        history.append({'연도':y,'월':f"{m}월",'날짜':dt_s.strftime('%y/%m/%d'),'구분':'매도','종목':K_CODE,'단가':p_s,'수량':k_sh,'거래금액':sell_amt,'수령배당금':0,'현금잔고':cash,'총자산':cash,'배당률':0.0}); k_sh = 0
-                        dt_t, p_t = get_safe_price(t_prices_all, dt_s.year, dt_s.month, dt_s.day)
-                        if dt_t:
-                            t_sh = cash // p_t; cash -= (t_sh*p_t)
-                            history.append({'연도':y,'월':f"{m}월",'날짜':dt_t.strftime('%y/%m/%d'),'구분':'매수','종목':T_CODE,'단가':p_t,'수량':t_sh,'거래금액':t_sh*p_t,'수령배당금':0,'현금잔고':cash,'총자산':cash+(t_sh*p_t),'배당률':0.0})
+                
+                # 배당금 익일 재투자
+                if dt_pay:
+                    found = k_prices_all.index[k_prices_all.index > dt_pay]
+                    if not found.empty and found[0].year == y and found[0].month == m:
+                        dt_re = found[0]
+                        p_re = int(k_prices_all.loc[dt_re])
+                        if cash >= p_re:
+                            add_sh = cash // p_re
+                            if add_sh > 0:
+                                cash -= (add_sh * p_re)
+                                k_sh += add_sh
+                                history.append({'연도':y,'월':f"{m}월",'날짜':dt_re.strftime('%y/%m/%d'),'구분':'재투자','종목':K_CODE,'단가':p_re,'수량':add_sh,'거래금액':add_sh*p_re,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_re),'배당률':0.0})
 
-            k_m_prices = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)]
-            t_m_prices = t_prices_all[(t_prices_all.index.year == y) & (t_prices_all.index.month == m)] if T_CODE else pd.Series()
-            if not k_m_prices.empty or not t_m_prices.empty:
-                cur_ticker = K_CODE if k_sh > 0 else (T_CODE if t_sh > 0 else "-")
-                cur_sh = k_sh if k_sh > 0 else t_sh
-                cur_p = int(k_m_prices.iloc[-1]) if k_sh > 0 and not k_m_prices.empty else (int(t_m_prices.iloc[-1]) if t_sh > 0 and not t_m_prices.empty else 0)
-                last_dt = k_m_prices.index[-1] if not k_m_prices.empty else t_m_prices.index[-1]
-                history.append({'연도':y,'월':f"{m}월",'날짜':last_dt.strftime('%y/%m/%d'),'구분':'평가','종목':cur_ticker,'단가':cur_p,'수량':cur_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*(int(k_m_prices.iloc[-1]) if not k_m_prices.empty else 0))+(t_sh*(int(t_m_prices.iloc[-1]) if not t_m_prices.empty else 0)),'배당률':0.0})
+                k_m_prices = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)]
+                if not k_m_prices.empty:
+                    last_dt = k_m_prices.index[-1]
+                    cur_p = int(k_m_prices.iloc[-1])
+                    history.append({'연도':y,'월':f"{m}월",'날짜':last_dt.strftime('%y/%m/%d'),'구분':'평가','종목':K_CODE,'단가':cur_p,'수량':k_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*cur_p),'배당률':0.0})
 
-        df_hist = pd.DataFrame(history)
-        monthly_summary, labels, divs, dps_list, assets, prev_asset = [], [], [], [], [], INITIAL_CASH
-        for y, m in target_ym:
-            m_data = df_hist[(df_hist['연도'] == y) & (df_hist['월'] == f"{m}월")]
-            if m_data.empty: continue
-            m_div = m_data['수령배당금'].sum(); m_final = m_data.iloc[-1]['총자산']
-            m_dps = m_data[m_data['구분'] == '배당']['단가'].sum()
-            m_yield = m_data[m_data['구분'] == '배당']['배당률'].sum()
-            labels.append(f"{y}.{m}"); divs.append(int(m_div)); dps_list.append(int(m_dps)); assets.append(int(m_final))
-            monthly_summary.append({'기간': f"{y}.{m:02d}", '주당배당금': m_dps, '배당률': m_yield, '배당금': m_div, '총자산': m_final, '증감': m_final - prev_asset})
-            prev_asset = m_final
+            # ===============================================
+            # 스윙 교체 (SWING) 모드 로직
+            # ===============================================
+            else:
+                if t_sh > 0:
+                    dt_pay = None
+                    if t_d['val'] > 0:
+                        dt, p = get_safe_price(t_prices_all, y, m, t_d['pay_day'])
+                        if dt:
+                            dt_pay = dt
+                            dv = t_sh * t_d['val']; cash += dv; total_div += dv
+                            history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':T_CODE,'단가':t_d['val'],'수량':t_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(t_sh*p),'배당률':t_d['yield']})
+                    
+                    dt_switch = None
+                    if dt_pay:
+                        found = t_prices_all.index[t_prices_all.index > dt_pay]
+                        if not found.empty and found[0].year == y and found[0].month == m:
+                            dt_switch = found[0]
+                    else:
+                        dt_s, _ = get_safe_price(t_prices_all, y, m, t_d['reinv_day'])
+                        dt_switch = dt_s
 
-        total_profit = assets[-1] - INITIAL_CASH
-        profit_color = "#dc2626" if total_profit > 0 else "#2563eb"
+                    if dt_switch:
+                        p_s = int(t_prices_all.loc[dt_switch])
+                        sell_amt = t_sh * p_s; cash += sell_amt
+                        history.append({'연도':y,'월':f"{m}월",'날짜':dt_switch.strftime('%y/%m/%d'),'구분':'매도','종목':T_CODE,'단가':p_s,'수량':t_sh,'거래금액':sell_amt,'수령배당금':0,'현금잔고':cash,'총자산':cash,'배당률':0.0}); t_sh = 0
+                        
+                        if dt_switch in k_prices_all.index:
+                            p_k = int(k_prices_all.loc[dt_switch])
+                            k_sh = cash // p_k; cash -= (k_sh*p_k)
+                            history.append({'연도':y,'월':f"{m}월",'날짜':dt_switch.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p_k,'수량':k_sh,'거래금액':k_sh*p_k,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_k),'배당률':0.0})
 
-        summary_rows = "".join([f"<tr><td>{s['기간']}</td><td>{int(s['주당배당금']):,}</td><td style='color:#f59e0b; font-weight:600;'>{s['배당률']:.2f}%</td><td>{fmt_man(s['배당금'])}</td><td><b>{fmt_man(s['총자산'])}</b></td><td style='color:{'#dc2626' if s['증감']>0 else '#2563eb'}; font-weight:600;'>{fmt_man(s['증감'])}</td></tr>" for s in monthly_summary[::-1]])
-        def get_cls(cat): return "buy" if "매수" in cat else "sell" if "매도" in cat else "div" if "배당" in cat else "eval"
-        df_display = df_hist.sort_values(by=['날짜'], ascending=True)
-        detailed_rows = "".join([f"<tr class='row-{get_cls(r['구분'])}'><td>{r['날짜']}</td><td><span class='badge {get_cls(r['구분'])}'>{r['구분']}</span></td><td style='text-align:center;'>{r['종목']}</td><td>{r['단가']:,}</td><td>{r['수량']:,}</td><td>{fmt_man(r['거래금액']) if r['거래금액']>0 else '-'}</td><td class='div-val'>{f'+{fmt_man(r['수령배당금'])}' if r['수령배당금']>0 else '-'}</td><td>{fmt_man(r['현금잔고'])}</td><td style='font-weight:700;'>{fmt_man(r['총자산'])}</td></tr>" for _, r in df_display.iterrows()])
+                if not first_buy:
+                    dt, p = get_safe_price(k_prices_all, y, m, 1)
+                    if dt:
+                        k_sh = cash // p; cash -= (k_sh*p); first_buy = True
+                        history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p,'수량':k_sh,'거래금액':k_sh*p,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':0.0})
 
-        html_template = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-            <style>
-                body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; color: #334155; }}
-                .card-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 25px; }}
-                .card {{ background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-align: center; }}
-                .card h3 {{ font-size: 13px; margin: 0 0 8px 0; color: #64748b; font-weight: 600; }}
-                .card p {{ font-size: 16px; margin: 0; word-break: keep-all; }}
-                .section-title {{ font-size: 16px; font-weight: 700; margin: 30px 0 12px 0; border-left: 4px solid #3b82f6; padding-left: 8px; }}
-                .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 280px; margin-bottom: 20px; }}
-                table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; }}
-                th {{ background: #f1f5f9; padding: 12px; font-size: 12px; }}
-                td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; font-size: 12px; }}
-                .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; }}
-                .buy {{ background: #ef4444; }} .sell {{ background: #3b82f6; }} .div {{ background: #10b981; }} .eval {{ background: #94a3b8; }}
-                .row-div {{ background-color: #f0fdf4 !important; }} .div-val {{ color: #166534; font-weight: 800; }}
-                .note-box {{ margin-top: 15px; padding: 10px; font-size: 13px; color: #64748b; line-height: 1.6; }}
-            </style>
-        </head>
-        <body>
-            <div class="card-grid">
-                <div class="card"><h3>초기 투자금</h3><p style="color:#3b82f6; font-weight:700;">{fmt_man(INITIAL_CASH)}원</p></div>
-                <div class="card"><h3>최종 자산</h3><p style="color:#dc2626; font-weight:700;">{fmt_man(assets[-1])}원</p></div>
-                <div class="card"><h3>누적 배당금</h3><p style="color:#166534; font-weight:700;">{fmt_man(int(total_div))}원</p></div>
-                <div class="card"><h3>총 수익금</h3><p style="color:{profit_color}; font-weight:700;">{fmt_man(total_profit)}원</p></div>
-                <div class="card"><h3>총 수익률</h3><p style="color:#dc2626; font-weight:700;">{((assets[-1]/INITIAL_CASH)-1)*100:.2f}%</p></div>
-            </div>
-            <div class="section-title">📉 배당금 및 주당 배당금 추이</div>
-            <div class="chart-container"><canvas id="divChart"></canvas></div>
-            <div class="section-title">📈 자산 성장 추이</div>
-            <div class="chart-container"><canvas id="assetChart"></canvas></div>
-            <div class="section-title">📅 월별 요약 (최신순)</div>
-            <table><thead><tr><th>기간</th><th>주당배당</th><th>배당률</th><th>배당합계</th><th>기말자산</th><th>증감</th></tr></thead><tbody>{summary_rows}</tbody></table>
-            <div class="section-title">🔍 상세 거래 내역 (과거순)</div>
-            <table><thead><tr><th>날짜</th><th>구분</th><th>종목</th><th>단가</th><th>수량</th><th>거래금액</th><th>배당금</th><th>잔고</th><th>총자산</th></tr></thead><tbody>{detailed_rows}</tbody></table>
-            <div class="note-box">
-                ※ 재투자는 받은 배당금을 그 다음 거래일에 매매하는 걸로 가정했습니다.<br>
-                ※ 월말평가는 당월 마지막 거래일 종가와 수량을 계산한 값입니다.
-            </div>
-            <script>
-                new Chart(document.getElementById('divChart'), {{ type: 'bar', data: {{ labels: {json.dumps(labels)}, datasets: [{{ label: '배당금(원)', data: {json.dumps(divs)}, backgroundColor: '#10b981', yAxisID: 'y' }}, {{ label: '주당 배당금(원)', data: {json.dumps(dps_list)}, type: 'line', borderColor: '#f59e0b', yAxisID: 'y1', tension: 0.3 }}] }}, options: {{ responsive: true, maintainAspectRatio: false }} }});
-                new Chart(document.getElementById('assetChart'), {{ type: 'line', data: {{ labels: {json.dumps(labels)}, datasets: [{{ label: '총자산(원)', data: {json.dumps(assets)}, borderColor: '#ef4444', fill: false, tension: 0.1 }}] }}, options: {{ responsive: true, maintainAspectRatio: false }} }});
-            </script>
-        </body>
-        </html>
-        """
-        components.html(html_template, height=2200, scrolling=True)
+                if k_sh > 0:
+                    dt_pay = None
+                    if k_d['val'] > 0:
+                        dt, p = get_safe_price(k_prices_all, y, m, k_d['pay_day'])
+                        if dt:
+                            dt_pay = dt
+                            dv = k_sh * k_d['val']; cash += dv; total_div += dv
+                            history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':K_CODE,'단가':k_d['val'],'수량':k_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':k_d['yield']})
+                    
+                    dt_switch = None
+                    if dt_pay:
+                        found = k_prices_all.index[k_prices_all.index > dt_pay
