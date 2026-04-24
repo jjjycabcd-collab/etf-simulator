@@ -21,7 +21,7 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="ETF 배당 백테스트", layout="wide")
 
 # ==========================================
-# API 키 설정 (Streamlit Secrets 활용)
+# API 키 설정
 # ==========================================
 try:
     KIS_APP_KEY = st.secrets["KIS_APP_KEY"]
@@ -33,7 +33,7 @@ except:
 KIS_TOKEN = None
 
 # ==========================================
-# [함수] 데이터 수집 및 토큰 관리
+# 함수 정의부
 # ==========================================
 def get_kis_token():
     global KIS_TOKEN
@@ -59,9 +59,12 @@ def fetch_stock_name(code, token):
         except: pass
     return f"종목 ({code})"
 
+# [수정] 실제 시장 종가(Market Price) 수집 및 캐시 강제 갱신
 def fetch_actual_prices(code, start_date, end_date, token):
     if not code: return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
-    price_file = f"price_market_{code}.json"
+    
+    # 캐시 파일명 변경하여 기존 잘못된 데이터 강제 삭제
+    price_file = f"price_market_v2_{code}.json"
     if os.path.exists(price_file):
         try:
             with open(price_file, "r") as f:
@@ -74,18 +77,22 @@ def fetch_actual_prices(code, start_date, end_date, token):
     headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST03010100", "custtype": "P"}
     all_prices, s_dt, e_dt = {}, start_date.strftime('%Y%m%d'), end_date.strftime('%Y%m%d')
     current_end = e_dt
+    
     while True:
+        # FID_ORG_ADJ_PRC: "0" (반드시 실제 주가로 가져옴)
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": s_dt, "FID_INPUT_DATE_2": current_end, "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"} 
         try:
             res = requests.get(url, headers=headers, params=params)
             data = res.json()
             if data['rt_cd'] != '0' or not data.get('output2'): break
             for row in data['output2']:
-                if row['stck_bsop_date']: all_prices[pd.to_datetime(row['stck_bsop_date'])] = int(row['stck_clpr'])
+                if row['stck_bsop_date']:
+                    all_prices[pd.to_datetime(row['stck_bsop_date'])] = int(row['stck_clpr'])
             oldest = data['output2'][-1]['stck_bsop_date']
             if oldest <= s_dt or len(data['output2']) < 100: break
             current_end = (pd.to_datetime(oldest) - pd.Timedelta(days=1)).strftime('%Y%m%d')
         except: break
+    
     price_series = pd.Series(all_prices).sort_index()
     try:
         with open(price_file, "w") as f:
@@ -208,7 +215,7 @@ if run_btn:
         K_NAME_RAW = fetch_stock_name(K_CODE, KIS_TOKEN)
         T_NAME_RAW = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
         
-        # [수정] 상단 타이틀 형식 변경 (백테스트 리포트 명칭 추가)
+        # [수정] 상단 타이틀 형식 반영
         display_name = f"{K_NAME_RAW.split(' (')[0]}"
         if T_CODE: display_name += f", {T_NAME_RAW.split(' (')[0]}"
         st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 백테스트 리포트")
@@ -231,6 +238,7 @@ if run_btn:
         for y, m in target_ym:
             k_d, t_d = k_divs_all[y][m-1], t_divs_all.get(y, [None]*12)[m-1] if T_CODE else None
             
+            # TIGER(T) 매도 및 KODEX(K) 매수 (SWING)
             if T_CODE and t_sh > 0:
                 if t_d['val'] > 0:
                     dt, p = get_safe_price(t_prices_all, y, m, t_d['pay_day'])
@@ -246,12 +254,14 @@ if run_btn:
                         k_sh = cash // p_k; cash -= (k_sh*p_k)
                         history.append({'연도':y,'월':f"{m}월",'날짜':dt_k.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p_k,'수량':k_sh,'거래금액':k_sh*p_k,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_k),'배당률':0.0})
 
+            # 초기 매수 (첫 달)
             if not first_buy:
                 dt, p = get_safe_price(k_prices_all, y, m, 1)
                 if dt:
                     k_sh = cash // p; cash -= (k_sh*p); first_buy = True
                     history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p,'수량':k_sh,'거래금액':k_sh*p,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':0.0})
 
+            # KODEX(K) 매도 및 TIGER(T) 매수
             if k_sh > 0:
                 if k_d['val'] > 0:
                     dt, p = get_safe_price(k_prices_all, y, m, k_d['pay_day'])
@@ -268,6 +278,7 @@ if run_btn:
                             t_sh = cash // p_t; cash -= (t_sh*p_t)
                             history.append({'연도':y,'월':f"{m}월",'날짜':dt_t.strftime('%y/%m/%d'),'구분':'매수','종목':T_CODE,'단가':p_t,'수량':t_sh,'거래금액':t_sh*p_t,'수령배당금':0,'현금잔고':cash,'총자산':cash+(t_sh*p_t),'배당률':0.0})
 
+            # 월말 평가
             k_m_prices = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)]
             t_m_prices = t_prices_all[(t_prices_all.index.year == y) & (t_prices_all.index.month == m)] if T_CODE else pd.Series()
             if not k_m_prices.empty or not t_m_prices.empty:
@@ -285,13 +296,11 @@ if run_btn:
             m_data = df_hist[(df_hist['연도'] == y) & (df_hist['월'] == f"{m}월")]
             if m_data.empty: continue
             m_div = m_data['수령배당금'].sum(); m_final = m_data.iloc[-1]['총자산']
-            m_dps = m_data[m_data['구분'] == '배당']['단가'].sum()
-            m_yield = m_data[m_data['구분'] == '배당']['배당률'].sum()
+            m_dps = m_data[m_data['구분'] == '배당']['단가'].sum(); m_yield = m_data[m_data['구분'] == '배당']['배당률'].sum()
             labels.append(f"{y}.{m}"); divs.append(int(m_div)); dps_list.append(int(m_dps)); assets.append(int(m_final))
             monthly_summary.append({'기간': f"{y}.{m:02d}", '주당배당금': m_dps, '배당률': m_yield, '배당금': m_div, '총자산': m_final, '증감': m_final - prev_asset})
             prev_asset = m_final
 
-        # [수정] 총 수익금 계산
         total_profit = assets[-1] - INITIAL_CASH
         profit_color = "#dc2626" if total_profit > 0 else "#2563eb"
 
