@@ -22,7 +22,7 @@ st.set_page_config(page_title="ETF 배당 백테스트", layout="wide")
 st.title("📊 ETF 배당 시뮬레이터")
 
 # ==========================================
-# API 키 설정
+# API 키 설정 (Streamlit Secrets 활용)
 # ==========================================
 try:
     KIS_APP_KEY = st.secrets["KIS_APP_KEY"]
@@ -34,7 +34,7 @@ except:
 KIS_TOKEN = None
 
 # ==========================================
-# [함수] KIS 토큰 발급
+# [함수] KIS 토큰 및 기본 정보 수집
 # ==========================================
 def get_kis_token():
     global KIS_TOKEN
@@ -75,7 +75,9 @@ def fetch_actual_prices(code, start_year, end_year, token):
     url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
     headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST03010100", "custtype": "P"}
     all_prices, start_dt, current_end = {}, f"{start_year}0101", f"{end_year}1231"
+    
     while True:
+        # FID_ORG_ADJ_PRC: "0" (실제 시장가 종가)
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": start_dt, "FID_INPUT_DATE_2": current_end, "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"} 
         try:
             res = requests.get(url, headers=headers, params=params)
@@ -157,7 +159,7 @@ def fmt_man(val):
     return f"{int(val) // 10000:,}만" if abs(val) >= 10000 else f"{int(val):,}"
 
 # ==========================================
-# UI 영역
+# UI 영역: 사이드바 입력
 # ==========================================
 with st.sidebar:
     st.header("⚙️ 시뮬레이션 설정")
@@ -166,17 +168,46 @@ with st.sidebar:
     etf_input = st.text_input("종목 코드 (쉼표 구분)", "498400, 472150")
     run_btn = st.button("시뮬레이션 실행", type="primary")
 
+# ==========================================
+# 실행 영역
+# ==========================================
 if run_btn:
-    with st.spinner('시장가 종가 데이터를 수집하며 백테스트 중입니다...'):
+    with st.spinner('실시간 데이터를 수집하며 백테스트 중입니다...'):
         now = datetime.datetime.now()
         curr_year, curr_month = now.year, now.month
 
         INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input))
-        years_split = [int(y) for y in period_input.split('~')]
-        start_year, end_year = years_split[0], min(years_split[1], curr_year)
+        
+        # [수정] 복합 날짜 검색 로직 (2025.1 같은 소수점 처리 완벽 대응)
+        def parse_date_str(s, is_end=False):
+            if '.' in s:
+                parts = s.split('.')
+                return int(parts[0]), int(parts[1])
+            else:
+                return int(s), (12 if is_end else 1)
+
+        try:
+            if '~' in period_input:
+                s_part, e_part = period_input.split('~')
+                start_year, start_month = parse_date_str(s_part.strip())
+                end_year, end_month = parse_date_str(e_part.strip(), True)
+            else:
+                start_year, start_month = parse_date_str(period_input.strip())
+                end_year, end_month = parse_date_str(period_input.strip(), True)
+        except:
+            start_year, start_month, end_year, end_month = 2025, 1, curr_year, curr_month
+
+        # 미래 날짜 보정
+        if end_year > curr_year or (end_year == curr_year and end_month > curr_month):
+            end_year, end_month = curr_year, curr_month
         
         YEAR_RANGE = list(range(start_year, end_year + 1))
-        target_ym = [(y, m) for y in YEAR_RANGE for m in range(1, 13) if not (y == curr_year and m > curr_month)]
+        target_ym = []
+        for y in YEAR_RANGE:
+            for m in range(1, 13):
+                if y == start_year and m < start_month: continue
+                if y == end_year and m > end_month: break
+                target_ym.append((y, m))
 
         KIS_TOKEN = get_kis_token()
         codes = [c.strip() for c in etf_input.replace(',', ' ').split() if c.strip().isdigit()]
@@ -197,7 +228,6 @@ if run_btn:
             if ps.empty: return None, None
             target_dt = pd.Timestamp(y, m, d)
             found = ps.index[ps.index >= target_dt]
-            # 해당 월 내에서만 찾도록 제한
             if not found.empty and found[0].year == y and found[0].month == m:
                 return (found[0], int(ps.loc[found[0]]))
             return (None, None)
@@ -205,7 +235,7 @@ if run_btn:
         for y, m in target_ym:
             k_d, t_d = k_divs_all[y][m-1], t_divs_all.get(y, [None]*12)[m-1] if T_CODE else None
             
-            # 1. TIGER 배당 및 스윙
+            # T 배당/스윙
             if T_CODE and t_sh > 0:
                 if t_d['val'] > 0:
                     dt, p = get_safe_price(t_prices_all, y, m, t_d['pay_day'])
@@ -221,14 +251,14 @@ if run_btn:
                         k_sh = cash // p_k; cash -= (k_sh*p_k)
                         history.append({'연도':y,'월':f"{m}월",'날짜':dt_k.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p_k,'수량':k_sh,'거래금액':k_sh*p_k,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_k),'배당률':0.0})
 
-            # 2. 초기 매수
+            # 초기 매수
             if not first_buy:
                 dt, p = get_safe_price(k_prices_all, y, m, 1)
                 if dt:
                     k_sh = cash // p; cash -= (k_sh*p); first_buy = True
                     history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p,'수량':k_sh,'거래금액':k_sh*p,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':0.0})
 
-            # 3. KODEX 배당 및 스윙
+            # K 배당/스윙
             if k_sh > 0:
                 if k_d['val'] > 0:
                     dt, p = get_safe_price(k_prices_all, y, m, k_d['pay_day'])
@@ -245,50 +275,38 @@ if run_btn:
                             t_sh = cash // p_t; cash -= (t_sh*p_t)
                             history.append({'연도':y,'월':f"{m}월",'날짜':dt_t.strftime('%y/%m/%d'),'구분':'매수','종목':T_CODE,'단가':p_t,'수량':t_sh,'거래금액':t_sh*p_t,'수령배당금':0,'현금잔고':cash,'총자산':cash+(t_sh*p_t),'배당률':0.0})
 
-            # 4. 월말 평가 (정확한 연도/월 필터링)
+            # 월말 평가
             k_m_prices = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)]
             t_m_prices = t_prices_all[(t_prices_all.index.year == y) & (t_prices_all.index.month == m)] if T_CODE else pd.Series()
-            
             if not k_m_prices.empty or not t_m_prices.empty:
-                eval_p = 0; eval_ticker = "-"; eval_sh = 0
-                if k_sh > 0 and not k_m_prices.empty:
-                    eval_ticker, eval_sh, eval_p = K_CODE, k_sh, int(k_m_prices.iloc[-1])
-                    last_dt = k_m_prices.index[-1]
-                elif t_sh > 0 and not t_m_prices.empty:
-                    eval_ticker, eval_sh, eval_p = T_CODE, t_sh, int(t_m_prices.iloc[-1])
-                    last_dt = t_m_prices.index[-1]
-                else:
-                    last_dt = pd.Timestamp(y, m, 28) # 데이터 없을 때 임시 날짜
-                
+                cur_ticker = K_CODE if k_sh > 0 else (T_CODE if t_sh > 0 else "-")
+                cur_sh = k_sh if k_sh > 0 else t_sh
+                cur_p = int(k_m_prices.iloc[-1]) if k_sh > 0 and not k_m_prices.empty else (int(t_m_prices.iloc[-1]) if t_sh > 0 and not t_m_prices.empty else 0)
+                last_dt = k_m_prices.index[-1] if not k_m_prices.empty else t_m_prices.index[-1]
                 v_k = k_sh * (int(k_m_prices.iloc[-1]) if not k_m_prices.empty else 0)
                 v_t = t_sh * (int(t_m_prices.iloc[-1]) if not t_m_prices.empty else 0)
-                history.append({'연도':y, '월':f"{m}월", '날짜':last_dt.strftime('%y/%m/%d'), '구분':'평가', '종목':eval_ticker, '단가':eval_p, '수량':eval_sh, '거래금액':0, '수령배당금':0, '현금잔고':cash, '총자산':cash+v_k+v_t, '배당률':0.0})
+                history.append({'연도':y,'월':f"{m}월",'날짜':last_dt.strftime('%y/%m/%d'),'구분':'평가','종목':cur_ticker,'단가':cur_p,'수량':cur_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+v_k+v_t,'배당률':0.0})
 
-        # 📊 데이터 가공 및 정렬
+        # 📊 리포트 및 차트 데이터 가공
         df_hist = pd.DataFrame(history)
         monthly_summary, labels, divs, dps_list, assets, prev_asset = [], [], [], [], [], INITIAL_CASH
-        
-        # 차트용 데이터 (시간순)
         for y, m in target_ym:
             m_data = df_hist[(df_hist['연도'] == y) & (df_hist['월'] == f"{m}월")]
             if m_data.empty: continue
-            m_div = m_data['수령배당금'].sum()
-            m_final = m_data.iloc[-1]['총자산']
+            m_div = m_data['수령배당금'].sum(); m_final = m_data.iloc[-1]['총자산']
             m_dps = m_data[m_data['구분'] == '배당']['단가'].sum()
             m_yield = m_data[m_data['구분'] == '배당']['배당률'].sum()
             labels.append(f"{y}.{m}"); divs.append(int(m_div)); dps_list.append(int(m_dps)); assets.append(int(m_final))
             monthly_summary.append({'기간': f"{y}.{m:02d}", '주당배당금': m_dps, '배당률': m_yield, '배당금': m_div, '총자산': m_final, '증감': m_final - prev_asset})
             prev_asset = m_final
 
-        # 테이블용 행 생성 (최신순)
+        # UI 복구
         summary_rows = "".join([f"<tr><td>{s['기간']}</td><td>{int(s['주당배당금']):,}</td><td style='color:#f59e0b; font-weight:600;'>{s['배당률']:.2f}%</td><td>{fmt_man(s['배당금'])}</td><td><b>{fmt_man(s['총자산'])}</b></td><td style='color:{'#dc2626' if s['증감']>0 else '#2563eb'}; font-weight:600;'>{fmt_man(s['증감'])}</td></tr>" for s in monthly_summary[::-1]])
-        
         def get_cls(cat): return "buy" if "매수" in cat else "sell" if "매도" in cat else "div" if "배당" in cat else "eval"
-        
-        # 상세 내역도 최신순으로 정렬해서 출력
-        df_hist_display = df_hist.sort_values(by=['날짜'], ascending=False)
-        detailed_rows = "".join([f"<tr class='row-{get_cls(r['구분'])}'><td>{r['날짜']}</td><td><span class='badge {get_cls(r['구분'])}'>{r['구분']}</span></td><td style='text-align:center;'>{r['종목']}</td><td>{r['단가']:,}</td><td>{r['수량']:,}</td><td>{fmt_man(r['거래금액']) if r['거래금액']>0 else '-'}</td><td class='div-val'>{f'+{fmt_man(r['수령배당금'])}' if r['수령배당금']>0 else '-'}</td><td>{fmt_man(r['현금잔고'])}</td><td style='font-weight:700;'>{fmt_man(r['총자산'])}</td></tr>" for _, r in df_hist_display.iterrows()])
+        df_display = df_hist.sort_values(by=['날짜'], ascending=False)
+        detailed_rows = "".join([f"<tr class='row-{get_cls(r['구분'])}'><td>{r['날짜']}</td><td><span class='badge {get_cls(r['구분'])}'>{r['구분']}</span></td><td style='text-align:center;'>{r['종목']}</td><td>{r['단가']:,}</td><td>{r['수량']:,}</td><td>{fmt_man(r['거래금액']) if r['거래금액']>0 else '-'}</td><td class='div-val'>{f'+{fmt_man(r['수령배당금'])}' if r['수령배당금']>0 else '-'}</td><td>{fmt_man(r['현금잔고'])}</td><td style='font-weight:700;'>{fmt_man(r['총자산'])}</td></tr>" for _, r in df_display.iterrows()])
 
+        title_name = f"{K_NAME.split(' (')[0]}, {T_NAME.split(' (')[0]}" if T_CODE else K_NAME
         html_template = f"""
         <!DOCTYPE html>
         <html>
