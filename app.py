@@ -23,8 +23,7 @@ st.set_page_config(page_title="ETF 배당 백테스트", layout="wide")
 st.title("📊 ETF 배당 시뮬레이터")
 
 # ==========================================
-# [중요] 보안을 위해 실제 키는 삭제하고 
-# Streamlit Secrets에서 불러오는 방식으로 수정
+# API 키 설정
 # ==========================================
 try:
     KIS_APP_KEY = st.secrets["KIS_APP_KEY"]
@@ -36,7 +35,7 @@ except:
 KIS_TOKEN = None
 
 # ==========================================
-# 함수 정의부 (기존 로직)
+# 함수 정의부
 # ==========================================
 def get_kis_token():
     global KIS_TOKEN
@@ -49,11 +48,14 @@ def get_kis_token():
         return KIS_TOKEN
     except: return None
 
-def fetch_stock_name(code, token):
+@st.cache_data(ttl=86400, show_spinner=False)  # 하루(24시간) 동안 종목명 캐싱
+def fetch_stock_name(code, token_dummy):
+    # token_dummy는 캐시 키를 위해 받지만, 실제 토큰은 내부에서 새로 발급받아 씁니다.
+    temp_token = get_kis_token()
     if not code: return ""
-    if token:
+    if temp_token:
         url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/search-info"
-        headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "CTPF1002R", "custtype": "P"}
+        headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {temp_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "CTPF1002R", "custtype": "P"}
         try:
             res = requests.get(url, headers=headers, params={"PRDT_TYPE_CD": "300", "PDNO": code})
             data = res.json()
@@ -84,31 +86,25 @@ def fetch_kis_prices(code, start_year, end_year, token):
         except: break
     return pd.Series(all_prices).sort_index()
 
-def fetch_all_years_data(code, years, token, is_etf=True):
-    empty_series = pd.Series(dtype=float, index=pd.DatetimeIndex([]))
-    if not code: return empty_series, {y: [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)] for y in years}
-    
-    prices = fetch_kis_prices(code, min(years), max(years), token) if token else empty_series
-    if prices.empty: prices = empty_series
-    
+# ==========================================
+# [핵심] 분배금 스크래핑 전용 캐시 함수 (12시간 동안 데이터 기억)
+# 여러 명이 동시에 눌러도, 크롬은 딱 한 번만 켜집니다!
+# ==========================================
+@st.cache_data(ttl=43200, show_spinner=False)
+def scrape_dividend_data(code, years_tuple):
+    years = list(years_tuple)
     div_map = {y: [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)] for y in years}
-    if not is_etf: return prices, div_map
-    
     driver = None
     try:
         options = webdriver.ChromeOptions()
         options.add_argument('--headless=new')
-        # ==========================================
-        # [강화됨] 클라우드 서버 봇 탐지 우회 및 최적화
-        # ==========================================
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
         options.add_argument('--window-size=1920,1080')
-        options.add_argument('--disable-blink-features=AutomationControlled') # 봇 탐지 방어막 해제
+        options.add_argument('--disable-blink-features=AutomationControlled')
         options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
         
-        # Streamlit Cloud의 내장 크롬 드라이버를 강제로 우선 탐색
         chromedriver_path = shutil.which("chromedriver")
         if chromedriver_path:
             driver = webdriver.Chrome(service=Service(chromedriver_path), options=options)
@@ -116,8 +112,6 @@ def fetch_all_years_data(code, years, token, is_etf=True):
             driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
             
         driver.get(f"https://www.etfcheck.co.kr/mobile/etpitem/{code}/cash/hist")
-        
-        # 해외망이라 데이터 로딩이 느릴 수 있으므로 대기시간 5초로 증가
         time.sleep(5)
         
         for _ in range(5):
@@ -159,6 +153,21 @@ def fetch_all_years_data(code, years, token, is_etf=True):
             if code == '498400': div_map[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
             elif code == '472150': div_map[y] = [{'val':250, 'pay_day':2, 'reinv_day':3, 'yield':0.0} for _ in range(12)]
 
+    return div_map
+
+def fetch_all_years_data(code, years, token, is_etf=True):
+    empty_series = pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+    if not code: return empty_series, {y: [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)] for y in years}
+    
+    prices = fetch_kis_prices(code, min(years), max(years), token) if token else empty_series
+    if prices.empty: prices = empty_series
+    
+    if not is_etf:
+        div_map = {y: [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)] for y in years}
+        return prices, div_map
+    
+    # 캐시된 스크래핑 함수 호출 (튜플 형태로 넘겨야 캐시가 작동함)
+    div_map = scrape_dividend_data(code, tuple(years))
     return prices, div_map
 
 def fmt_man(val):
@@ -230,8 +239,9 @@ if run_btn:
             RUN_MODE, K_CODE, T_CODE = 'SWING', '498400', '472150'
 
         KIS_TOKEN = get_kis_token()
-        K_NAME = fetch_stock_name(K_CODE, KIS_TOKEN)
-        T_NAME = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
+        # 종목명 가져올 때도 토큰 충돌 막기 위해 더미 텍스트 같이 넘김
+        K_NAME = fetch_stock_name(K_CODE, "dummy")
+        T_NAME = fetch_stock_name(T_CODE, "dummy") if T_CODE else ""
         ETF_BRANDS = ['KODEX', 'TIGER', 'ACE', 'SOL', 'RISE', 'PLUS', 'ARIRANG', 'KOSEF', 'HANARO', 'KBSTAR', 'TIMEFOLIO', 'TREX', '마이티', 'HK', '히어로즈']
         K_IS_ETF = any(brand in K_NAME.upper() for brand in ETF_BRANDS)
         T_IS_ETF = any(brand in T_NAME.upper() for brand in ETF_BRANDS) if T_NAME else False
