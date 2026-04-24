@@ -26,15 +26,13 @@ st.title("📊 ETF 배당 시뮬레이터")
 # Streamlit Secrets에서 불러오는 방식으로 수정
 # ==========================================
 try:
-    # 클라우드 배포 환경 (Streamlit Secrets 사용)
     KIS_APP_KEY = st.secrets["KIS_APP_KEY"]
     KIS_APP_SECRET = st.secrets["KIS_APP_SECRET"]
 except:
-    # 로컬 테스트 환경 (키를 직접 넣어서 테스트할 때)
-    # GitHub에 올리기 전에는 아래 큰따옴표 안을 비우거나 임시 문자를 넣어주세요.
-	KIS_APP_KEY = "YOUR_APP_KEY_HERE"
-	KIS_APP_SECRET = "YOUR_APP_SECRET_HERE"
-	KIS_TOKEN = None
+    KIS_APP_KEY = "YOUR_APP_KEY_HERE"
+    KIS_APP_SECRET = "YOUR_APP_SECRET_HERE"
+
+KIS_TOKEN = None  # <-- 이렇게 왼쪽 끝으로 딱 붙여서 빼주세요!
 
 # ==========================================
 # 함수 정의부 (기존 로직)
