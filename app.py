@@ -46,6 +46,13 @@ def get_kis_token():
 
 @st.cache_data(ttl=86400)
 def fetch_stock_name(code, token):
+    # [수정] KIS API 장애 시를 대비한 자체 종목명 사전 추가
+    fallback_names = {
+        '498400': 'KODEX 200타겟위클리커버드콜', 
+        '472150': 'TIGER 배당커버드콜액티브'
+    }
+    name = fallback_names.get(code, "종목")
+    
     if not code: return ""
     if token:
         url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/search-info"
@@ -53,9 +60,10 @@ def fetch_stock_name(code, token):
         try:
             res = requests.get(url, headers=headers, params={"PRDT_TYPE_CD": "300", "PDNO": code})
             data = res.json()
-            if data['rt_cd'] == '0': return f"{data['output']['prdt_abrv_name']} ({code})"
+            if data['rt_cd'] == '0': 
+                name = data['output']['prdt_abrv_name']
         except: pass
-    return f"종목 ({code})"
+    return f"{name} ({code})"
 
 def fetch_actual_prices(code, start_date, end_date, token):
     if not code: return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
@@ -161,6 +169,10 @@ with st.sidebar:
     cash_input = st.text_input("초기 투자금 (원)", "40000000")
     period_input = st.text_input("테스트 기간 (예: 2025.1~2026)", "2025.1~2026.4")
     etf_input = st.text_input("종목 코드 (쉼표 구분)", "498400, 472150")
+    
+    # [추가] 배당금 처리 옵션 추가
+    div_option = st.radio("배당금 처리", ["재투자", "인출(생활비)"], index=0)
+    
     run_btn = st.button("시뮬레이션 실행", type="primary")
 
 if not run_btn:
@@ -207,10 +219,10 @@ if run_btn:
         KIS_TOKEN = get_kis_token()
         codes = [c.strip() for c in etf_input.replace(',', ' ').split() if c.strip().isdigit()]
         K_CODE = codes[0]; T_CODE = codes[1] if len(codes) > 1 else None
+        
         K_NAME_RAW = fetch_stock_name(K_CODE, KIS_TOKEN)
         T_NAME_RAW = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
         
-        # [수정] 상단 타이틀 명칭을 "백테스트"로 변경
         display_name = f"{K_NAME_RAW.split(' (')[0]}"
         if T_CODE: display_name += f", {T_NAME_RAW.split(' (')[0]}"
         st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 백테스트")
@@ -237,6 +249,9 @@ if run_btn:
             k_d = k_divs_all[y][m-1]
             t_d = t_divs_all.get(y, [None]*12)[m-1] if T_CODE else None
             
+            # ==================================================
+            # 단일 종목 (SINGLE) 모드 로직
+            # ==================================================
             if not T_CODE:
                 if not first_buy:
                     dt, p = get_safe_price(k_prices_all, y, m, 1)
@@ -249,10 +264,16 @@ if run_btn:
                     dt, p = get_safe_price(k_prices_all, y, m, k_d['pay_day'])
                     if dt:
                         dt_pay = dt
-                        dv = k_sh * k_d['val']; cash += dv; total_div += dv
+                        dv = k_sh * k_d['val']; total_div += dv
+                        
+                        # [수정] 재투자 시에만 계좌 현금에 추가, 인출 시엔 더하지 않음
+                        if div_option == "재투자":
+                            cash += dv
+                            
                         history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':K_CODE,'단가':k_d['val'],'수량':k_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':k_d['yield']})
                 
-                if dt_pay:
+                # 재투자를 선택한 경우에만 익일 매수 진행
+                if div_option == "재투자" and dt_pay:
                     found = k_prices_all.index[k_prices_all.index > dt_pay]
                     if not found.empty and found[0].year == y and found[0].month == m:
                         dt_re = found[0]
@@ -270,6 +291,9 @@ if run_btn:
                     cur_p = int(k_m_prices.iloc[-1])
                     history.append({'연도':y,'월':f"{m}월",'날짜':last_dt.strftime('%y/%m/%d'),'구분':'평가','종목':K_CODE,'단가':cur_p,'수량':k_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*cur_p),'배당률':0.0})
 
+            # ==================================================
+            # 스윙 교체 (SWING) 모드 로직
+            # ==================================================
             else:
                 if t_sh > 0:
                     dt_pay = None
@@ -277,14 +301,17 @@ if run_btn:
                         dt, p = get_safe_price(t_prices_all, y, m, t_d['pay_day'])
                         if dt:
                             dt_pay = dt
-                            dv = t_sh * t_d['val']; cash += dv; total_div += dv
+                            dv = t_sh * t_d['val']; total_div += dv
+                            
+                            # [수정] 재투자 시에만 계좌 현금에 추가
+                            if div_option == "재투자": cash += dv
+                                
                             history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':T_CODE,'단가':t_d['val'],'수량':t_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(t_sh*p),'배당률':t_d['yield']})
                     
                     dt_switch = None
                     if dt_pay:
                         found = t_prices_all.index[t_prices_all.index > dt_pay]
-                        if not found.empty and found[0].year == y and found[0].month == m:
-                            dt_switch = found[0]
+                        if not found.empty and found[0].year == y and found[0].month == m: dt_switch = found[0]
                     else:
                         dt_s, _ = get_safe_price(t_prices_all, y, m, t_d['reinv_day'])
                         dt_switch = dt_s
@@ -311,14 +338,17 @@ if run_btn:
                         dt, p = get_safe_price(k_prices_all, y, m, k_d['pay_day'])
                         if dt:
                             dt_pay = dt
-                            dv = k_sh * k_d['val']; cash += dv; total_div += dv
+                            dv = k_sh * k_d['val']; total_div += dv
+                            
+                            # [수정] 재투자 시에만 계좌 현금에 추가
+                            if div_option == "재투자": cash += dv
+                                
                             history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':K_CODE,'단가':k_d['val'],'수량':k_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':k_d['yield']})
                     
                     dt_switch = None
                     if dt_pay:
                         found = k_prices_all.index[k_prices_all.index > dt_pay]
-                        if not found.empty and found[0].year == y and found[0].month == m:
-                            dt_switch = found[0]
+                        if not found.empty and found[0].year == y and found[0].month == m: dt_switch = found[0]
                     else:
                         dt_s, _ = get_safe_price(k_prices_all, y, m, k_d['reinv_day'])
                         dt_switch = dt_s
@@ -356,7 +386,14 @@ if run_btn:
             monthly_summary.append({'기간': f"{y}.{m:02d}", '주당배당금': m_dps, '배당률': m_yield, '배당금': m_div, '총자산': m_final, '증감': m_final - prev_asset})
             prev_asset = m_final
 
-        total_profit = assets[-1] - INITIAL_CASH
+        # [수정] 인출(생활비) 선택 시, 생활비로 쓴 배당금도 경제적 이득이므로 총 수익금에 포함
+        if div_option == "재투자":
+            total_profit = assets[-1] - INITIAL_CASH
+            profit_rate = (total_profit / INITIAL_CASH) * 100
+        else:
+            total_profit = (assets[-1] + total_div) - INITIAL_CASH
+            profit_rate = (total_profit / INITIAL_CASH) * 100
+            
         profit_color = "#dc2626" if total_profit > 0 else "#2563eb"
 
         summary_rows = "".join([f"<tr><td>{s['기간']}</td><td>{int(s['주당배당금']):,}</td><td style='color:#f59e0b; font-weight:600;'>{s['배당률']:.2f}%</td><td>{fmt_man(s['배당금'])}</td><td><b>{fmt_man(s['총자산'])}</b></td><td style='color:{'#dc2626' if s['증감']>0 else '#2563eb'}; font-weight:600;'>{fmt_man(s['증감'])}</td></tr>" for s in monthly_summary[::-1]])
@@ -393,7 +430,7 @@ if run_btn:
                 <div class="card"><h3>최종 자산</h3><p style="color:#dc2626; font-weight:700;">{fmt_man(assets[-1])}원</p></div>
                 <div class="card"><h3>누적 배당금</h3><p style="color:#166534; font-weight:700;">{fmt_man(int(total_div))}원</p></div>
                 <div class="card"><h3>총 수익금</h3><p style="color:{profit_color}; font-weight:700;">{fmt_man(total_profit)}원</p></div>
-                <div class="card"><h3>총 수익률</h3><p style="color:#dc2626; font-weight:700;">{((assets[-1]/INITIAL_CASH)-1)*100:.2f}%</p></div>
+                <div class="card"><h3>총 수익률</h3><p style="color:#dc2626; font-weight:700;">{profit_rate:.2f}%</p></div>
             </div>
             <div class="section-title">📉 배당금 및 주당 배당금 추이</div>
             <div class="chart-container"><canvas id="divChart"></canvas></div>
@@ -404,7 +441,8 @@ if run_btn:
             <div class="section-title">🔍 상세 거래 내역 (과거순)</div>
             <table><thead><tr><th>날짜</th><th>구분</th><th>종목</th><th>단가</th><th>수량</th><th>거래금액</th><th>배당금</th><th>잔고</th><th>총자산</th></tr></thead><tbody>{detailed_rows}</tbody></table>
             <div class="note-box">
-                ※ 재투자는 받은 배당금을 그 다음 거래일에 매매하는 걸로 가정했습니다.<br>
+                ※ 재투자 옵션 선택 시 받은 배당금을 그 다음 거래일에 매매하는 걸로 가정했습니다.<br>
+                ※ 인출(생활비) 옵션 선택 시 배당금은 재투자되지 않으며, '총 수익금'과 '총 수익률'은 인출한 배당금을 포함하여 계산됩니다.<br>
                 ※ 월말평가는 당월 마지막 거래일 종가와 수량을 계산한 값입니다.
             </div>
             <script>
