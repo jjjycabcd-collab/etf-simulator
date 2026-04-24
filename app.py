@@ -60,7 +60,6 @@ def fetch_stock_name(code, token):
 def fetch_actual_prices(code, start_date, end_date, token):
     if not code: return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
     
-    # [중요] v7 캐시 적용 - 기존 13,277원 가짜 데이터 완전 삭제
     price_file = f"price_market_v7_{code}.json"
     if os.path.exists(price_file):
         try:
@@ -76,7 +75,6 @@ def fetch_actual_prices(code, start_date, end_date, token):
     current_end = e_dt
     
     while True:
-        # [핵심 오류 수정] FID_ORG_ADJ_PRC: "1" (0=수정주가, 1=원주가/실제시장가)
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": s_dt, "FID_INPUT_DATE_2": current_end, "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "1"} 
         try:
             res = requests.get(url, headers=headers, params=params)
@@ -212,9 +210,10 @@ if run_btn:
         K_NAME_RAW = fetch_stock_name(K_CODE, KIS_TOKEN)
         T_NAME_RAW = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
         
+        # [수정] 상단 타이틀 명칭을 "백테스트"로 변경
         display_name = f"{K_NAME_RAW.split(' (')[0]}"
         if T_CODE: display_name += f", {T_NAME_RAW.split(' (')[0]}"
-        st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 리포트")
+        st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 백테스트")
         
         k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts, KIS_TOKEN)
         t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts, KIS_TOKEN) if T_CODE else pd.Series(dtype=float)
@@ -362,6 +361,7 @@ if run_btn:
 
         summary_rows = "".join([f"<tr><td>{s['기간']}</td><td>{int(s['주당배당금']):,}</td><td style='color:#f59e0b; font-weight:600;'>{s['배당률']:.2f}%</td><td>{fmt_man(s['배당금'])}</td><td><b>{fmt_man(s['총자산'])}</b></td><td style='color:{'#dc2626' if s['증감']>0 else '#2563eb'}; font-weight:600;'>{fmt_man(s['증감'])}</td></tr>" for s in monthly_summary[::-1]])
         def get_cls(cat): return "buy" if "매수" in cat or "재투자" in cat else "sell" if "매도" in cat else "div" if "배당" in cat else "eval"
+        
         df_display = df_hist.sort_values(by=['날짜'], ascending=True)
         detailed_rows = "".join([f"<tr class='row-{get_cls(r['구분'])}'><td>{r['날짜']}</td><td><span class='badge {get_cls(r['구분'])}'>{r['구분']}</span></td><td style='text-align:center;'>{r['종목']}</td><td>{r['단가']:,}</td><td>{r['수량']:,}</td><td>{fmt_man(r['거래금액']) if r['거래금액']>0 else '-'}</td><td class='div-val'>{f'+{fmt_man(r['수령배당금'])}' if r['수령배당금']>0 else '-'}</td><td>{fmt_man(r['현금잔고'])}</td><td style='font-weight:700;'>{fmt_man(r['총자산'])}</td></tr>" for _, r in df_display.iterrows()])
 
