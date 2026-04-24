@@ -7,6 +7,7 @@ import re
 import time
 import json
 import datetime
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -32,7 +33,7 @@ except:
     KIS_APP_KEY = "YOUR_APP_KEY_HERE"
     KIS_APP_SECRET = "YOUR_APP_SECRET_HERE"
 
-KIS_TOKEN = None  # <-- 이렇게 왼쪽 끝으로 딱 붙여서 빼주세요!
+KIS_TOKEN = None
 
 # ==========================================
 # 함수 정의부 (기존 로직)
@@ -98,20 +99,30 @@ def fetch_all_years_data(code, years, token, is_etf=True):
         options = webdriver.ChromeOptions()
         options.add_argument('--headless=new')
         # ==========================================
-        # [수정됨] 클라우드 서버(리눅스) 실행용 필수 옵션 추가
+        # [강화됨] 클라우드 서버 봇 탐지 우회 및 최적화
         # ==========================================
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
-        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        options.add_argument('--window-size=1920,1080')
+        options.add_argument('--disable-blink-features=AutomationControlled') # 봇 탐지 방어막 해제
+        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
         
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        # Streamlit Cloud의 내장 크롬 드라이버를 강제로 우선 탐색
+        chromedriver_path = shutil.which("chromedriver")
+        if chromedriver_path:
+            driver = webdriver.Chrome(service=Service(chromedriver_path), options=options)
+        else:
+            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+            
         driver.get(f"https://www.etfcheck.co.kr/mobile/etpitem/{code}/cash/hist")
-        time.sleep(3)
+        
+        # 해외망이라 데이터 로딩이 느릴 수 있으므로 대기시간 5초로 증가
+        time.sleep(5)
         
         for _ in range(5):
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(1)
+            time.sleep(1.5)
             
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         for row in soup.find_all('tr'):
@@ -141,11 +152,7 @@ def fetch_all_years_data(code, years, token, is_etf=True):
     except: pass
     finally:
         if driver: driver.quit()
-        
-    # ==========================================
-    # [수정됨] 에러가 나도 무조건 기본값이 세팅되도록 
-    # try~except 블록 바깥으로 안전망(Fallback) 로직 이동
-    # ==========================================
+
     for y in years:
         y_has_data = any(item['val'] > 0 for item in div_map[y])
         if not y_has_data:
@@ -176,7 +183,6 @@ with st.sidebar:
 if run_btn:
     with st.spinner('실시간 데이터를 수집하며 백테스트를 진행 중입니다... (약 10~20초 소요)'):
         
-        # 1. 입력값 파싱
         try:
             INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input))
             if INITIAL_CASH == 0: INITIAL_CASH = 40000000
@@ -223,7 +229,6 @@ if run_btn:
         else:
             RUN_MODE, K_CODE, T_CODE = 'SWING', '498400', '472150'
 
-        # 2. 데이터 수집
         KIS_TOKEN = get_kis_token()
         K_NAME = fetch_stock_name(K_CODE, KIS_TOKEN)
         T_NAME = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
@@ -234,7 +239,6 @@ if run_btn:
         k_prices_all, k_divs_all = fetch_all_years_data(K_CODE, YEAR_RANGE, KIS_TOKEN, K_IS_ETF)
         t_prices_all, t_divs_all = fetch_all_years_data(T_CODE, YEAR_RANGE, KIS_TOKEN, T_IS_ETF)
 
-        # 3. 시뮬레이션
         history, cash, k_sh, t_sh, total_div, first_buy_done = [], INITIAL_CASH, 0, 0, 0, False
 
         def log(y, m, d, cat, tick_code, p, sh, trans, div, c, s_val, yld=0.0):
@@ -327,7 +331,6 @@ if run_btn:
                     if t_sh > 0: p = int(t_p.loc[d_last]); log(y, m, d_last, "평가", T_CODE, p, t_sh, 0, 0, cash, t_sh*p)
                     elif k_sh > 0: p = int(k_p.loc[d_last]); log(y, m, d_last, "평가", K_CODE, p, k_sh, 0, 0, cash, k_sh*p)
 
-        # 4. 리포트 생성 및 화면 출력
         df_hist = pd.DataFrame(history)
 
         if df_hist.empty:
@@ -366,7 +369,7 @@ if run_btn:
             <style>
                 body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; color: #334155; margin: 0; }}
                 .container {{ max-width: 1100px; margin: auto; padding-bottom: 30px; }}
-                h1 {{ font-size: 22px; text-align: center; margin: 20px 0; display: none; }} /* 스트림릿 타이틀이 있으니 HTML 타이틀은 숨김 */
+                h1 {{ font-size: 22px; text-align: center; margin: 20px 0; display: none; }}
                 
                 .card-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 25px; }}
                 .card {{ background: white; padding: 15px 10px; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-align: center; }}
@@ -462,5 +465,4 @@ if run_btn:
         </html>
         """
         
-        # 파일로 저장하지 않고 화면에 바로 렌더링! (높이를 넉넉하게 2000px로 줌)
         components.html(html_template, height=2000, scrolling=True)
