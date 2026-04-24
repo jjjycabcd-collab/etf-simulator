@@ -19,10 +19,9 @@ import streamlit.components.v1 as components
 # 웹 페이지 기본 설정
 # ==========================================
 st.set_page_config(page_title="ETF 배당 백테스트", layout="wide")
-st.title("📊 ETF 배당 시뮬레이터")
 
 # ==========================================
-# API 키 설정
+# API 키 설정 (Streamlit Secrets)
 # ==========================================
 try:
     KIS_APP_KEY = st.secrets["KIS_APP_KEY"]
@@ -34,7 +33,7 @@ except:
 KIS_TOKEN = None
 
 # ==========================================
-# [함수] KIS 토큰 발급
+# 함수 정의부
 # ==========================================
 def get_kis_token():
     global KIS_TOKEN
@@ -68,8 +67,7 @@ def fetch_actual_prices(code, start_date, end_date, token):
             with open(price_file, "r") as f:
                 cached = json.load(f)
             series = pd.Series({pd.to_datetime(k): v for k, v in cached.items()}).sort_index()
-            if not series.empty and series.index[0] <= start_date:
-                return series
+            if not series.empty and series.index[0] <= start_date: return series
         except: pass
 
     url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
@@ -154,24 +152,34 @@ def fmt_man(val):
     return f"{int(val) // 10000:,}만" if abs(val) >= 10000 else f"{int(val):,}"
 
 # ==========================================
-# UI 영역
+# UI 영역: 사이드바 입력
 # ==========================================
 with st.sidebar:
     st.header("⚙️ 시뮬레이션 설정")
     cash_input = st.text_input("초기 투자금 (원)", "40000000")
-    period_input = st.text_input("테스트 기간 (예: 2025.1~2026)", "2025~2026")
+    period_input = st.text_input("테스트 기간 (예: 2025.1~2026)", "2025.1~2026.4")
     etf_input = st.text_input("종목 코드 (쉼표 구분)", "498400, 472150")
     run_btn = st.button("시뮬레이션 실행", type="primary")
 
+# 초기 화면용 타이틀
+if not run_btn:
+    st.title("📊 ETF 배당 시뮬레이터")
+
+# ==========================================
+# 실행 영역
+# ==========================================
 if run_btn:
-    with st.spinner('실시간 데이터를 분석 중입니다...'):
+    with st.spinner('실시간 시장가 데이터를 수집하며 백테스트 중입니다...'):
         now = datetime.datetime.now()
         curr_year, curr_month = now.year, now.month
         INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input))
+        
+        # [수정] 날짜 파싱 로직 보강 (ValueError 방지)
         def parse_date_str(s, is_end=False):
             if '.' in s:
                 parts = s.split('.'); return int(parts[0]), int(parts[1])
             return int(s), (12 if is_end else 1)
+        
         try:
             if '~' in period_input:
                 s_part, e_part = period_input.split('~')
@@ -199,8 +207,13 @@ if run_btn:
         KIS_TOKEN = get_kis_token()
         codes = [c.strip() for c in etf_input.replace(',', ' ').split() if c.strip().isdigit()]
         K_CODE = codes[0]; T_CODE = codes[1] if len(codes) > 1 else None
-        K_NAME = fetch_stock_name(K_CODE, KIS_TOKEN)
-        T_NAME = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
+        K_NAME_RAW = fetch_stock_name(K_CODE, KIS_TOKEN)
+        T_NAME_RAW = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
+        
+        # [수정] 상단 타이틀 동적 생성
+        display_name = f"{K_NAME_RAW.split(' (')[0]}"
+        if T_CODE: display_name += f", {T_NAME_RAW.split(' (')[0]}"
+        st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 리포트")
         
         k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts, KIS_TOKEN)
         t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts, KIS_TOKEN) if T_CODE else pd.Series(dtype=float)
@@ -220,6 +233,7 @@ if run_btn:
         for y, m in target_ym:
             k_d, t_d = k_divs_all[y][m-1], t_divs_all.get(y, [None]*12)[m-1] if T_CODE else None
             
+            # T 배당/스윙
             if T_CODE and t_sh > 0:
                 if t_d['val'] > 0:
                     dt, p = get_safe_price(t_prices_all, y, m, t_d['pay_day'])
@@ -235,12 +249,14 @@ if run_btn:
                         k_sh = cash // p_k; cash -= (k_sh*p_k)
                         history.append({'연도':y,'월':f"{m}월",'날짜':dt_k.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p_k,'수량':k_sh,'거래금액':k_sh*p_k,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_k),'배당률':0.0})
 
+            # 초기 매수
             if not first_buy:
                 dt, p = get_safe_price(k_prices_all, y, m, 1)
                 if dt:
                     k_sh = cash // p; cash -= (k_sh*p); first_buy = True
                     history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p,'수량':k_sh,'거래금액':k_sh*p,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':0.0})
 
+            # K 배당/스윙
             if k_sh > 0:
                 if k_d['val'] > 0:
                     dt, p = get_safe_price(k_prices_all, y, m, k_d['pay_day'])
@@ -257,6 +273,7 @@ if run_btn:
                             t_sh = cash // p_t; cash -= (t_sh*p_t)
                             history.append({'연도':y,'월':f"{m}월",'날짜':dt_t.strftime('%y/%m/%d'),'구분':'매수','종목':T_CODE,'단가':p_t,'수량':t_sh,'거래금액':t_sh*p_t,'수령배당금':0,'현금잔고':cash,'총자산':cash+(t_sh*p_t),'배당률':0.0})
 
+            # [수정] 월말 평가 (단가/수량 보강)
             k_m_prices = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)]
             t_m_prices = t_prices_all[(t_prices_all.index.year == y) & (t_prices_all.index.month == m)] if T_CODE else pd.Series()
             if not k_m_prices.empty or not t_m_prices.empty:
@@ -264,7 +281,9 @@ if run_btn:
                 cur_sh = k_sh if k_sh > 0 else t_sh
                 cur_p = int(k_m_prices.iloc[-1]) if k_sh > 0 and not k_m_prices.empty else (int(t_m_prices.iloc[-1]) if t_sh > 0 and not t_m_prices.empty else 0)
                 last_dt = k_m_prices.index[-1] if not k_m_prices.empty else t_m_prices.index[-1]
-                history.append({'연도':y,'월':f"{m}월",'날짜':last_dt.strftime('%y/%m/%d'),'구분':'평가','종목':cur_ticker,'단가':cur_p,'수량':cur_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*(int(k_m_prices.iloc[-1]) if not k_m_prices.empty else 0))+(t_sh*(int(t_m_prices.iloc[-1]) if not t_m_prices.empty else 0)),'배당률':0.0})
+                v_k = k_sh * (int(k_m_prices.iloc[-1]) if not k_m_prices.empty else 0)
+                v_t = t_sh * (int(t_m_prices.iloc[-1]) if not t_m_prices.empty else 0)
+                history.append({'연도':y,'월':f"{m}월",'날짜':last_dt.strftime('%y/%m/%d'),'구분':'평가','종목':cur_ticker,'단가':cur_p,'수량':cur_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+v_k+v_t,'배당률':0.0})
 
         df_hist = pd.DataFrame(history)
         monthly_summary, labels, divs, dps_list, assets, prev_asset = [], [], [], [], [], INITIAL_CASH
@@ -278,10 +297,9 @@ if run_btn:
             monthly_summary.append({'기간': f"{y}.{m:02d}", '주당배당금': m_dps, '배당률': m_yield, '배당금': m_div, '총자산': m_final, '증감': m_final - prev_asset})
             prev_asset = m_final
 
+        # 테이블 렌더링용 (최신순 요약, 과거순 상세)
         summary_rows = "".join([f"<tr><td>{s['기간']}</td><td>{int(s['주당배당금']):,}</td><td style='color:#f59e0b; font-weight:600;'>{s['배당률']:.2f}%</td><td>{fmt_man(s['배당금'])}</td><td><b>{fmt_man(s['총자산'])}</b></td><td style='color:{'#dc2626' if s['증감']>0 else '#2563eb'}; font-weight:600;'>{fmt_man(s['증감'])}</td></tr>" for s in monthly_summary[::-1]])
         def get_cls(cat): return "buy" if "매수" in cat else "sell" if "매도" in cat else "div" if "배당" in cat else "eval"
-        
-        # [수정] 상세 내역은 과거순(오름차순)으로 정렬
         df_display = df_hist.sort_values(by=['날짜'], ascending=True)
         detailed_rows = "".join([f"<tr class='row-{get_cls(r['구분'])}'><td>{r['날짜']}</td><td><span class='badge {get_cls(r['구분'])}'>{r['구분']}</span></td><td style='text-align:center;'>{r['종목']}</td><td>{r['단가']:,}</td><td>{r['수량']:,}</td><td>{fmt_man(r['거래금액']) if r['거래금액']>0 else '-'}</td><td class='div-val'>{f'+{fmt_man(r['수령배당금'])}' if r['수령배당금']>0 else '-'}</td><td>{fmt_man(r['현금잔고'])}</td><td style='font-weight:700;'>{fmt_man(r['총자산'])}</td></tr>" for _, r in df_display.iterrows()])
 
@@ -301,10 +319,8 @@ if run_btn:
                 td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; font-size: 12px; }}
                 .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; }}
                 .buy {{ background: #ef4444; }} .sell {{ background: #3b82f6; }} .div {{ background: #10b981; }} .eval {{ background: #94a3b8; }}
-                
-                /* [수정] 배당 행 음영 스타일 추가 */
-                .row-div {{ background-color: #f0fdf4 !important; }} 
-                .div-val {{ color: #166534; font-weight: 800; }}
+                .row-div {{ background-color: #f0fdf4 !important; }} .div-val {{ color: #166534; font-weight: 800; }}
+                .note-box {{ margin-top: 15px; padding: 10px; font-size: 13px; color: #64748b; line-height: 1.6; }}
             </style>
         </head>
         <body>
@@ -322,6 +338,10 @@ if run_btn:
             <table><thead><tr><th>기간</th><th>주당배당</th><th>배당률</th><th>배당합계</th><th>기말자산</th><th>증감</th></tr></thead><tbody>{summary_rows}</tbody></table>
             <div class="section-title">🔍 상세 거래 내역 (과거순)</div>
             <table><thead><tr><th>날짜</th><th>구분</th><th>종목</th><th>단가</th><th>수량</th><th>거래금액</th><th>배당금</th><th>잔고</th><th>총자산</th></tr></thead><tbody>{detailed_rows}</tbody></table>
+            <div class="note-box">
+                ※ 재투자는 받은 배당금을 그 다음 거래일에 매매하는 걸로 가정했습니다.<br>
+                ※ 월말평가는 당월 마지막 거래일 종가와 수량을 계산한 값입니다.
+            </div>
             <script>
                 new Chart(document.getElementById('divChart'), {{ type: 'bar', data: {{ labels: {json.dumps(labels)}, datasets: [{{ label: '배당금(원)', data: {json.dumps(divs)}, backgroundColor: '#10b981', yAxisID: 'y' }}, {{ label: '주당 배당금(원)', data: {json.dumps(dps_list)}, type: 'line', borderColor: '#f59e0b', yAxisID: 'y1', tension: 0.3 }}] }}, options: {{ responsive: true, maintainAspectRatio: false }} }});
                 new Chart(document.getElementById('assetChart'), {{ type: 'line', data: {{ labels: {json.dumps(labels)}, datasets: [{{ label: '총자산(원)', data: {json.dumps(assets)}, borderColor: '#ef4444', fill: false, tension: 0.1 }}] }}, options: {{ responsive: true, maintainAspectRatio: false }} }});
@@ -329,4 +349,4 @@ if run_btn:
         </body>
         </html>
         """
-        components.html(html_template, height=2000, scrolling=True)
+        components.html(html_template, height=2200, scrolling=True)
