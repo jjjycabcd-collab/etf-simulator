@@ -97,6 +97,14 @@ def fetch_all_years_data(code, years, token, is_etf=True):
     try:
         options = webdriver.ChromeOptions()
         options.add_argument('--headless=new')
+        # ==========================================
+        # [수정됨] 클라우드 서버(리눅스) 실행용 필수 옵션 추가
+        # ==========================================
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
         driver.get(f"https://www.etfcheck.co.kr/mobile/etpitem/{code}/cash/hist")
         time.sleep(3)
@@ -130,15 +138,20 @@ def fetch_all_years_data(code, years, token, is_etf=True):
                     if pay_dt.year in years:
                         div_map[pay_dt.year][pay_dt.month-1] = {'val': div_val, 'pay_day': p_day, 'reinv_day': r_day, 'yield': div_yield_val}
                 except: pass
-                
-        for y in years:
-            y_has_data = any(item['val'] > 0 for item in div_map[y])
-            if not y_has_data:
-                if code == '498400': div_map[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
-                elif code == '472150': div_map[y] = [{'val':250, 'pay_day':2, 'reinv_day':3, 'yield':0.0} for _ in range(12)]
     except: pass
     finally:
         if driver: driver.quit()
+        
+    # ==========================================
+    # [수정됨] 에러가 나도 무조건 기본값이 세팅되도록 
+    # try~except 블록 바깥으로 안전망(Fallback) 로직 이동
+    # ==========================================
+    for y in years:
+        y_has_data = any(item['val'] > 0 for item in div_map[y])
+        if not y_has_data:
+            if code == '498400': div_map[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
+            elif code == '472150': div_map[y] = [{'val':250, 'pay_day':2, 'reinv_day':3, 'yield':0.0} for _ in range(12)]
+
     return prices, div_map
 
 def fmt_man(val):
