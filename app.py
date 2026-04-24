@@ -187,7 +187,7 @@ def fmt_man(val):
 with st.sidebar:
     st.header("⚙️ 시뮬레이션 설정")
     cash_input = st.text_input("초기 투자금 (원)", "40000000")
-    period_input = st.text_input("백테스트 기간 (예: 2025~2026 또는 2025.1~2026)", "2025.1~2026.4")
+    period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.2)", "2025.1~2026.4")
     etf_input = st.text_input("종목 코드 (쉼표 구분)", "498400, 472150")
     div_option = st.radio("배당금 처리", ["재투자", "인출(생활비)"], index=0)
     run_btn = st.button("시뮬레이션 실행", type="primary")
