@@ -60,36 +60,22 @@ def fetch_stock_name(code, token):
         except: pass
     return f"종목 ({code})"
 
-# ==========================================
-# [중요 수정] 시작 날짜를 철저히 검증하는 주가 수집 함수
-# ==========================================
 def fetch_actual_prices(code, start_date, end_date, token):
     if not code: return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
-    
     price_file = f"price_actual_{code}.json"
-    
-    # 1. 기존 파일 캐시 검증
     if os.path.exists(price_file):
         try:
             with open(price_file, "r") as f:
                 cached = json.load(f)
             series = pd.Series({pd.to_datetime(k): v for k, v in cached.items()}).sort_index()
-            
-            # [수정] 파일의 첫 데이터가 사용자가 요청한 시작일보다 같거나 빨라야만 캐시 사용!
-            if not series.empty:
-                if series.index[0] <= start_date and series.index[-1] >= pd.Timestamp(datetime.datetime.now().date()):
-                    return series
+            if not series.empty and series.index[0] <= start_date:
+                return series
         except: pass
 
-    # 2. 캐시가 없거나 부족하면 새로 수집
     url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
     headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST03010100", "custtype": "P"}
-    
-    all_prices = {}
-    s_dt = start_date.strftime('%Y%m%d')
-    e_dt = end_date.strftime('%Y%m%d')
+    all_prices, s_dt, e_dt = {}, start_date.strftime('%Y%m%d'), end_date.strftime('%Y%m%d')
     current_end = e_dt
-    
     while True:
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": s_dt, "FID_INPUT_DATE_2": current_end, "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"} 
         try:
@@ -97,21 +83,16 @@ def fetch_actual_prices(code, start_date, end_date, token):
             data = res.json()
             if data['rt_cd'] != '0' or not data.get('output2'): break
             for row in data['output2']:
-                if row['stck_bsop_date']:
-                    all_prices[pd.to_datetime(row['stck_bsop_date'])] = int(row['stck_clpr'])
+                if row['stck_bsop_date']: all_prices[pd.to_datetime(row['stck_bsop_date'])] = int(row['stck_clpr'])
             oldest = data['output2'][-1]['stck_bsop_date']
             if oldest <= s_dt or len(data['output2']) < 100: break
             current_end = (pd.to_datetime(oldest) - pd.Timedelta(days=1)).strftime('%Y%m%d')
         except: break
-    
     price_series = pd.Series(all_prices).sort_index()
-    
-    # 3. 새로운 데이터로 파일 업데이트
     try:
         with open(price_file, "w") as f:
             json.dump({k.strftime('%Y-%m-%d'): v for k, v in all_prices.items()}, f)
     except: pass
-    
     return price_series
 
 def scrape_dividend_data(code, years_tuple):
@@ -124,7 +105,6 @@ def scrape_dividend_data(code, years_tuple):
             parsed_cache = {int(k): v for k, v in cached_data.items()}
             if all(y in parsed_cache for y in years): return parsed_cache
         except: pass
-
     div_map = {y: [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)] for y in years}
     driver = None
     try:
@@ -159,12 +139,10 @@ def scrape_dividend_data(code, years_tuple):
     except: pass
     finally:
         if driver: driver.quit()
-
     for y in years:
         if not any(item['val'] > 0 for item in div_map[y]):
             if code == '498400': div_map[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
             elif code == '472150': div_map[y] = [{'val':250, 'pay_day':2, 'reinv_day':3, 'yield':0.0} for _ in range(12)]
-
     try:
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(div_map, f, ensure_ascii=False, indent=4)
@@ -181,28 +159,19 @@ def fmt_man(val):
 with st.sidebar:
     st.header("⚙️ 시뮬레이션 설정")
     cash_input = st.text_input("초기 투자금 (원)", "40000000")
-    period_input = st.text_input("테스트 기간 (예: 2025~2026)", "2025~2026")
+    period_input = st.text_input("테스트 기간 (예: 2025.1~2026)", "2025~2026")
     etf_input = st.text_input("종목 코드 (쉼표 구분)", "498400, 472150")
     run_btn = st.button("시뮬레이션 실행", type="primary")
 
-# ==========================================
-# 실행 영역
-# ==========================================
 if run_btn:
-    with st.spinner('실시간 데이터를 수집하며 백테스트 중입니다...'):
+    with st.spinner('실시간 데이터를 분석 중입니다...'):
         now = datetime.datetime.now()
         curr_year, curr_month = now.year, now.month
-
         INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input))
-        
-        # 날짜 파싱 로직 복구
         def parse_date_str(s, is_end=False):
             if '.' in s:
-                parts = s.split('.')
-                return int(parts[0]), int(parts[1])
-            else:
-                return int(s), (12 if is_end else 1)
-
+                parts = s.split('.'); return int(parts[0]), int(parts[1])
+            return int(s), (12 if is_end else 1)
         try:
             if '~' in period_input:
                 s_part, e_part = period_input.split('~')
@@ -217,10 +186,8 @@ if run_btn:
         if end_year > curr_year or (end_year == curr_year and end_month > curr_month):
             end_year, end_month = curr_year, curr_month
         
-        # [수정] 정확한 시작/종료 Timestamp 생성
         start_ts = pd.Timestamp(start_year, start_month, 1)
         end_ts = pd.Timestamp(end_year, end_month, 28)
-
         YEAR_RANGE = list(range(start_year, end_year + 1))
         target_ym = []
         for y in YEAR_RANGE:
@@ -232,14 +199,11 @@ if run_btn:
         KIS_TOKEN = get_kis_token()
         codes = [c.strip() for c in etf_input.replace(',', ' ').split() if c.strip().isdigit()]
         K_CODE = codes[0]; T_CODE = codes[1] if len(codes) > 1 else None
-        
         K_NAME = fetch_stock_name(K_CODE, KIS_TOKEN)
         T_NAME = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
         
-        # [수정] 날짜 범위를 명확히 전달
         k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts, KIS_TOKEN)
         t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts, KIS_TOKEN) if T_CODE else pd.Series(dtype=float)
-        
         k_divs_all = scrape_dividend_data(K_CODE, tuple(YEAR_RANGE))
         t_divs_all = scrape_dividend_data(T_CODE, tuple(YEAR_RANGE)) if T_CODE else {}
 
@@ -300,9 +264,7 @@ if run_btn:
                 cur_sh = k_sh if k_sh > 0 else t_sh
                 cur_p = int(k_m_prices.iloc[-1]) if k_sh > 0 and not k_m_prices.empty else (int(t_m_prices.iloc[-1]) if t_sh > 0 and not t_m_prices.empty else 0)
                 last_dt = k_m_prices.index[-1] if not k_m_prices.empty else t_m_prices.index[-1]
-                v_k = k_sh * (int(k_m_prices.iloc[-1]) if not k_m_prices.empty else 0)
-                v_t = t_sh * (int(t_m_prices.iloc[-1]) if not t_m_prices.empty else 0)
-                history.append({'연도':y,'월':f"{m}월",'날짜':last_dt.strftime('%y/%m/%d'),'구분':'평가','종목':cur_ticker,'단가':cur_p,'수량':cur_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+v_k+v_t,'배당률':0.0})
+                history.append({'연도':y,'월':f"{m}월",'날짜':last_dt.strftime('%y/%m/%d'),'구분':'평가','종목':cur_ticker,'단가':cur_p,'수량':cur_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*(int(k_m_prices.iloc[-1]) if not k_m_prices.empty else 0))+(t_sh*(int(t_m_prices.iloc[-1]) if not t_m_prices.empty else 0)),'배당률':0.0})
 
         df_hist = pd.DataFrame(history)
         monthly_summary, labels, divs, dps_list, assets, prev_asset = [], [], [], [], [], INITIAL_CASH
@@ -318,7 +280,9 @@ if run_btn:
 
         summary_rows = "".join([f"<tr><td>{s['기간']}</td><td>{int(s['주당배당금']):,}</td><td style='color:#f59e0b; font-weight:600;'>{s['배당률']:.2f}%</td><td>{fmt_man(s['배당금'])}</td><td><b>{fmt_man(s['총자산'])}</b></td><td style='color:{'#dc2626' if s['증감']>0 else '#2563eb'}; font-weight:600;'>{fmt_man(s['증감'])}</td></tr>" for s in monthly_summary[::-1]])
         def get_cls(cat): return "buy" if "매수" in cat else "sell" if "매도" in cat else "div" if "배당" in cat else "eval"
-        df_display = df_hist.sort_values(by=['날짜'], ascending=False)
+        
+        # [수정] 상세 내역은 과거순(오름차순)으로 정렬
+        df_display = df_hist.sort_values(by=['날짜'], ascending=True)
         detailed_rows = "".join([f"<tr class='row-{get_cls(r['구분'])}'><td>{r['날짜']}</td><td><span class='badge {get_cls(r['구분'])}'>{r['구분']}</span></td><td style='text-align:center;'>{r['종목']}</td><td>{r['단가']:,}</td><td>{r['수량']:,}</td><td>{fmt_man(r['거래금액']) if r['거래금액']>0 else '-'}</td><td class='div-val'>{f'+{fmt_man(r['수령배당금'])}' if r['수령배당금']>0 else '-'}</td><td>{fmt_man(r['현금잔고'])}</td><td style='font-weight:700;'>{fmt_man(r['총자산'])}</td></tr>" for _, r in df_display.iterrows()])
 
         html_template = f"""
@@ -337,6 +301,9 @@ if run_btn:
                 td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; font-size: 12px; }}
                 .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; }}
                 .buy {{ background: #ef4444; }} .sell {{ background: #3b82f6; }} .div {{ background: #10b981; }} .eval {{ background: #94a3b8; }}
+                
+                /* [수정] 배당 행 음영 스타일 추가 */
+                .row-div {{ background-color: #f0fdf4 !important; }} 
                 .div-val {{ color: #166534; font-weight: 800; }}
             </style>
         </head>
@@ -353,7 +320,7 @@ if run_btn:
             <div class="chart-container"><canvas id="assetChart"></canvas></div>
             <div class="section-title">📅 월별 요약 (최신순)</div>
             <table><thead><tr><th>기간</th><th>주당배당</th><th>배당률</th><th>배당합계</th><th>기말자산</th><th>증감</th></tr></thead><tbody>{summary_rows}</tbody></table>
-            <div class="section-title">🔍 상세 거래 내역 (최신순)</div>
+            <div class="section-title">🔍 상세 거래 내역 (과거순)</div>
             <table><thead><tr><th>날짜</th><th>구분</th><th>종목</th><th>단가</th><th>수량</th><th>거래금액</th><th>배당금</th><th>잔고</th><th>총자산</th></tr></thead><tbody>{detailed_rows}</tbody></table>
             <script>
                 new Chart(document.getElementById('divChart'), {{ type: 'bar', data: {{ labels: {json.dumps(labels)}, datasets: [{{ label: '배당금(원)', data: {json.dumps(divs)}, backgroundColor: '#10b981', yAxisID: 'y' }}, {{ label: '주당 배당금(원)', data: {json.dumps(dps_list)}, type: 'line', borderColor: '#f59e0b', yAxisID: 'y1', tension: 0.3 }}] }}, options: {{ responsive: true, maintainAspectRatio: false }} }});
