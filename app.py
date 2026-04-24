@@ -8,6 +8,7 @@ import time
 import json
 import datetime
 import shutil
+import xml.etree.ElementTree as ET  # 네이버 fchart XML 파싱용 추가
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -20,85 +21,73 @@ import streamlit.components.v1 as components
 # ==========================================
 st.set_page_config(page_title="ETF 배당 백테스트", layout="wide")
 
-KIS_TOKEN = None
-
-# API 키 설정
-try:
-    KIS_APP_KEY = st.secrets["KIS_APP_KEY"]
-    KIS_APP_SECRET = st.secrets["KIS_APP_SECRET"]
-except:
-    KIS_APP_KEY = "YOUR_APP_KEY_HERE"
-    KIS_APP_SECRET = "YOUR_APP_SECRET_HERE"
-
 # ==========================================
 # 함수 정의부
 # ==========================================
-def get_kis_token():
-    global KIS_TOKEN
-    if KIS_TOKEN: return KIS_TOKEN
-    url = "https://openapi.koreainvestment.com:9443/oauth2/tokenP"
-    body = {"grant_type": "client_credentials", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET}
-    try:
-        res = requests.post(url, headers={"content-type": "application/json"}, json=body)
-        KIS_TOKEN = res.json().get('access_token')
-        return KIS_TOKEN
-    except: return None
 
 @st.cache_data(ttl=86400)
-def fetch_stock_name(code, token):
+def fetch_stock_name(code):
+    """네이버 증권에서 종목명 스크래핑"""
     fallback_names = {
         '498400': 'KODEX 200타겟위클리커버드콜', 
         '472150': 'TIGER 배당커버드콜액티브'
     }
     name = fallback_names.get(code, "종목")
     if not code: return ""
-    if token:
-        url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/search-info"
-        headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "CTPF1002R", "custtype": "P"}
-        try:
-            res = requests.get(url, headers=headers, params={"PRDT_TYPE_CD": "300", "PDNO": code})
-            data = res.json()
-            if data['rt_cd'] == '0': 
-                name = data['output']['prdt_abrv_name']
-        except: pass
+    
+    try:
+        url = f"https://finance.naver.com/item/main.naver?code={code}"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        res = requests.get(url, headers=headers)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
+            title_wrap = soup.find('div', {'class': 'wrap_company'})
+            if title_wrap:
+                name = title_wrap.find('h2').find('a').text.strip()
+    except Exception as e:
+        pass
+        
     return f"{name} ({code})"
 
-def fetch_actual_prices(code, start_date, end_date, token):
+def fetch_actual_prices(code, start_date, end_date):
+    """네이버 증권 차트 API에서 일별 종가 수집"""
     if not code: return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
     
-    price_file = f"price_market_v7_{code}.json"
+    price_file = f"price_market_naver_{code}.json"
     if os.path.exists(price_file):
         try:
             with open(price_file, "r") as f:
                 cached = json.load(f)
             series = pd.Series({pd.to_datetime(k): v for k, v in cached.items()}).sort_index()
-            if not series.empty and series.index[0] <= start_date: return series
+            if not series.empty and series.index[0] <= start_date and series.index[-1] >= end_date: 
+                return series
         except: pass
 
-    url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
-    headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST03010100", "custtype": "P"}
-    all_prices, s_dt, e_dt = {}, start_date.strftime('%Y%m%d'), end_date.strftime('%Y%m%d')
-    current_end = e_dt
+    # 네이버 fchart API 호출 (count=3000 이면 약 12년치 일봉 데이터)
+    url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=3000&requestType=0"
+    all_prices = {}
     
-    while True:
-        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": s_dt, "FID_INPUT_DATE_2": current_end, "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "1"} 
-        try:
-            res = requests.get(url, headers=headers, params=params)
-            data = res.json()
-            if data['rt_cd'] != '0' or not data.get('output2'): break
-            for row in data['output2']:
-                if row['stck_bsop_date']:
-                    all_prices[pd.to_datetime(row['stck_bsop_date'])] = int(row['stck_clpr'])
-            oldest = data['output2'][-1]['stck_bsop_date']
-            if oldest <= s_dt or len(data['output2']) < 100: break
-            current_end = (pd.to_datetime(oldest) - pd.Timedelta(days=1)).strftime('%Y%m%d')
-        except: break
+    try:
+        res = requests.get(url)
+        if res.status_code == 200:
+            root = ET.fromstring(res.text)
+            for item in root.findall('.//item'):
+                data = item.get('data')
+                if data:
+                    parts = data.split('|')
+                    date_str = parts[0]
+                    close_price = int(parts[4])
+                    all_prices[pd.to_datetime(date_str)] = close_price
+    except Exception as e:
+        pass
     
     price_series = pd.Series(all_prices).sort_index()
+    
     try:
         with open(price_file, "w") as f:
             json.dump({k.strftime('%Y-%m-%d'): v for k, v in all_prices.items()}, f)
     except: pass
+    
     return price_series
 
 def scrape_dividend_data(code, years_tuple):
@@ -111,6 +100,7 @@ def scrape_dividend_data(code, years_tuple):
             parsed_cache = {int(k): v for k, v in cached_data.items()}
             if all(y in parsed_cache for y in years): return parsed_cache
         except: pass
+        
     div_map = {y: [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)] for y in years}
     driver = None
     try:
@@ -145,10 +135,12 @@ def scrape_dividend_data(code, years_tuple):
     except: pass
     finally:
         if driver: driver.quit()
+        
     for y in years:
         if not any(item['val'] > 0 for item in div_map[y]):
             if code == '498400': div_map[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
             elif code == '472150': div_map[y] = [{'val':250, 'pay_day':2, 'reinv_day':3, 'yield':0.0} for _ in range(12)]
+            
     try:
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(div_map, f, ensure_ascii=False, indent=4)
@@ -165,7 +157,6 @@ def fmt_man(val):
 with st.sidebar:
     st.header("⚙️ 시뮬레이션 설정")
     cash_input = st.text_input("초기 투자금 (원)", "40000000")
-    # [수정] 입력 안내 문구 상세화
     period_input = st.text_input("백테스트 기간 (예: 2025~2026 또는 2025.1~2026)", "2025.1~2026.4")
     etf_input = st.text_input("종목 코드 (쉼표 구분)", "498400, 472150")
     div_option = st.radio("배당금 처리", ["재투자", "인출(생활비)"], index=0)
@@ -178,14 +169,15 @@ if not run_btn:
 # 실행 영역
 # ==========================================
 if run_btn:
-    with st.spinner('실시간 시장가 데이터를 수집하며 백테스트 중입니다...'):
+    with st.spinner('네이버 증권에서 실시간 데이터를 수집하며 백테스트 중입니다...'):
         now = datetime.datetime.now()
         curr_year, curr_month = now.year, now.month
         INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input)) if cash_input else 0
         
         def parse_date_str(s, is_end=False):
             if '.' in s:
-                parts = s.split('.'); return int(parts[0]), int(parts[1])
+                parts = s.split('.')
+                return int(parts[0]), int(parts[1])
             return int(s), (12 if is_end else 1)
         
         try:
@@ -212,20 +204,19 @@ if run_btn:
                 if y == end_year and m > end_month: break
                 target_ym.append((y, m))
 
-        KIS_TOKEN = get_kis_token()
         codes = [c.strip() for c in etf_input.replace(',', ' ').split() if c.strip().isdigit()]
         K_CODE = codes[0] if codes else ""
         T_CODE = codes[1] if len(codes) > 1 else None
         
-        K_NAME_RAW = fetch_stock_name(K_CODE, KIS_TOKEN) if K_CODE else "알수없음"
-        T_NAME_RAW = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
+        K_NAME_RAW = fetch_stock_name(K_CODE) if K_CODE else "알수없음"
+        T_NAME_RAW = fetch_stock_name(T_CODE) if T_CODE else ""
         
         display_name = f"{K_NAME_RAW.split(' (')[0]}"
         if T_CODE: display_name += f", {T_NAME_RAW.split(' (')[0]}"
         st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 백테스트")
         
-        k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts, KIS_TOKEN) if K_CODE else pd.Series(dtype=float)
-        t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts, KIS_TOKEN) if T_CODE else pd.Series(dtype=float)
+        k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts) if K_CODE else pd.Series(dtype=float)
+        t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts) if T_CODE else pd.Series(dtype=float)
         k_divs_all = scrape_dividend_data(K_CODE, tuple(YEAR_RANGE)) if K_CODE else {}
         t_divs_all = scrape_dividend_data(T_CODE, tuple(YEAR_RANGE)) if T_CODE else {}
 
