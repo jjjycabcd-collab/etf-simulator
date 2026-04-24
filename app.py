@@ -60,7 +60,8 @@ def fetch_stock_name(code, token):
 def fetch_actual_prices(code, start_date, end_date, token):
     if not code: return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
     
-    price_file = f"price_market_v6_{code}.json"
+    # [중요] v7 캐시 적용 - 기존 13,277원 가짜 데이터 완전 삭제
+    price_file = f"price_market_v7_{code}.json"
     if os.path.exists(price_file):
         try:
             with open(price_file, "r") as f:
@@ -75,7 +76,8 @@ def fetch_actual_prices(code, start_date, end_date, token):
     current_end = e_dt
     
     while True:
-        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": s_dt, "FID_INPUT_DATE_2": current_end, "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"} 
+        # [핵심 오류 수정] FID_ORG_ADJ_PRC: "1" (0=수정주가, 1=원주가/실제시장가)
+        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": s_dt, "FID_INPUT_DATE_2": current_end, "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "1"} 
         try:
             res = requests.get(url, headers=headers, params=params)
             data = res.json()
@@ -210,7 +212,6 @@ if run_btn:
         K_NAME_RAW = fetch_stock_name(K_CODE, KIS_TOKEN)
         T_NAME_RAW = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
         
-        # [수정] 상단 타이틀 형식 원래대로 원복
         display_name = f"{K_NAME_RAW.split(' (')[0]}"
         if T_CODE: display_name += f", {T_NAME_RAW.split(' (')[0]}"
         st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 리포트")
@@ -222,10 +223,13 @@ if run_btn:
 
         history, cash, k_sh, t_sh, total_div, first_buy = [], INITIAL_CASH, 0, 0, 0, False
 
-        def get_safe_price(ps, y, m, d):
+        def get_safe_price(ps, y, m, d, after=False):
             if ps.empty: return None, None
             target_dt = pd.Timestamp(y, m, d)
-            found = ps.index[ps.index >= target_dt]
+            if after:
+                found = ps.index[ps.index > target_dt]
+            else:
+                found = ps.index[ps.index >= target_dt]
             if not found.empty and found[0].year == y and found[0].month == m:
                 return (found[0], int(ps.loc[found[0]]))
             return (None, None)
@@ -234,9 +238,6 @@ if run_btn:
             k_d = k_divs_all[y][m-1]
             t_d = t_divs_all.get(y, [None]*12)[m-1] if T_CODE else None
             
-            # ===============================================
-            # [수정] 단일 종목 (SINGLE) 모드 로직 보완 (재투자 포함)
-            # ===============================================
             if not T_CODE:
                 if not first_buy:
                     dt, p = get_safe_price(k_prices_all, y, m, 1)
@@ -252,7 +253,6 @@ if run_btn:
                         dv = k_sh * k_d['val']; cash += dv; total_div += dv
                         history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':K_CODE,'단가':k_d['val'],'수량':k_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':k_d['yield']})
                 
-                # 배당금 익일 재투자
                 if dt_pay:
                     found = k_prices_all.index[k_prices_all.index > dt_pay]
                     if not found.empty and found[0].year == y and found[0].month == m:
@@ -271,9 +271,6 @@ if run_btn:
                     cur_p = int(k_m_prices.iloc[-1])
                     history.append({'연도':y,'월':f"{m}월",'날짜':last_dt.strftime('%y/%m/%d'),'구분':'평가','종목':K_CODE,'단가':cur_p,'수량':k_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*cur_p),'배당률':0.0})
 
-            # ===============================================
-            # 스윙 교체 (SWING) 모드 로직
-            # ===============================================
             else:
                 if t_sh > 0:
                     dt_pay = None
@@ -364,10 +361,7 @@ if run_btn:
         profit_color = "#dc2626" if total_profit > 0 else "#2563eb"
 
         summary_rows = "".join([f"<tr><td>{s['기간']}</td><td>{int(s['주당배당금']):,}</td><td style='color:#f59e0b; font-weight:600;'>{s['배당률']:.2f}%</td><td>{fmt_man(s['배당금'])}</td><td><b>{fmt_man(s['총자산'])}</b></td><td style='color:{'#dc2626' if s['증감']>0 else '#2563eb'}; font-weight:600;'>{fmt_man(s['증감'])}</td></tr>" for s in monthly_summary[::-1]])
-        
-        # [수정] "재투자"도 "buy" 클래스 할당하여 빨간 뱃지 표시
         def get_cls(cat): return "buy" if "매수" in cat or "재투자" in cat else "sell" if "매도" in cat else "div" if "배당" in cat else "eval"
-        
         df_display = df_hist.sort_values(by=['날짜'], ascending=True)
         detailed_rows = "".join([f"<tr class='row-{get_cls(r['구분'])}'><td>{r['날짜']}</td><td><span class='badge {get_cls(r['구분'])}'>{r['구분']}</span></td><td style='text-align:center;'>{r['종목']}</td><td>{r['단가']:,}</td><td>{r['수량']:,}</td><td>{fmt_man(r['거래금액']) if r['거래금액']>0 else '-'}</td><td class='div-val'>{f'+{fmt_man(r['수령배당금'])}' if r['수령배당금']>0 else '-'}</td><td>{fmt_man(r['현금잔고'])}</td><td style='font-weight:700;'>{fmt_man(r['총자산'])}</td></tr>" for _, r in df_display.iterrows()])
 
