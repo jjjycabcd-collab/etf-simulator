@@ -23,64 +23,36 @@ st.set_page_config(page_title="ETF 배당 백테스트", layout="wide")
 st.title("📊 ETF 배당 시뮬레이터")
 
 # ==========================================
-# API 키 설정
+# 함수 정의부 (API 키 불필요 - 네이버 금융 전용)
 # ==========================================
-try:
-    KIS_APP_KEY = st.secrets["KIS_APP_KEY"]
-    KIS_APP_SECRET = st.secrets["KIS_APP_SECRET"]
-except:
-    KIS_APP_KEY = "YOUR_APP_KEY_HERE"
-    KIS_APP_SECRET = "YOUR_APP_SECRET_HERE"
-
-KIS_TOKEN = None
-
-# ==========================================
-# 함수 정의부
-# ==========================================
-def get_kis_token():
-    global KIS_TOKEN
-    if KIS_TOKEN: return KIS_TOKEN
-    url = "https://openapi.koreainvestment.com:9443/oauth2/tokenP"
-    body = {"grant_type": "client_credentials", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET}
-    try:
-        res = requests.post(url, headers={"content-type": "application/json"}, json=body)
-        KIS_TOKEN = res.json().get('access_token')
-        return KIS_TOKEN
-    except: return None
-
-def fetch_stock_name(code, token):
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_stock_name(code):
     if not code: return ""
-    if token:
-        url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/search-info"
-        headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "CTPF1002R", "custtype": "P"}
-        try:
-            res = requests.get(url, headers=headers, params={"PRDT_TYPE_CD": "300", "PDNO": code})
-            data = res.json()
-            if data['rt_cd'] == '0': return f"{data['output']['prdt_abrv_name']} ({code})"
-        except: pass
     try:
         r = requests.get(f"https://finance.naver.com/item/main.naver?code={code}", headers={'User-Agent': 'Mozilla/5.0'})
         soup = BeautifulSoup(r.text, 'html.parser')
-        return f"{soup.select_one('.wrap_company h2 a').text} ({code})"
+        name = soup.select_one('.wrap_company h2 a').text
+        return f"{name} ({code})"
     except: return f"종목 ({code})"
 
-def fetch_kis_prices(code, start_year, end_year, token):
+# KIS API 대신 네이버 금융의 숨겨진 차트 API를 호출하여 해외 IP 차단 우회
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_naver_prices(code, start_year, end_year):
     if not code: return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
-    url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
-    headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST03010100", "custtype": "P"}
-    all_prices, start_dt, current_end = {}, f"{start_year}0101", f"{end_year}1231"
-    while True:
-        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": start_dt, "FID_INPUT_DATE_2": current_end, "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "1"}
-        try:
-            res = requests.get(url, headers=headers, params=params)
-            data = res.json()
-            if data['rt_cd'] != '0' or not data.get('output2'): break
-            for row in data['output2']:
-                if row['stck_bsop_date']: all_prices[pd.to_datetime(row['stck_bsop_date'])] = int(row['stck_clpr'])
-            oldest = data['output2'][-1]['stck_bsop_date']
-            if oldest <= start_dt or len(data['output2']) < 100: break
-            current_end = (pd.to_datetime(oldest) - pd.Timedelta(days=1)).strftime('%Y%m%d')
-        except: break
+    url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=3000&requestType=0"
+    all_prices = {}
+    try:
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+        # 정규식으로 네이버 XML 데이터 추출
+        matches = re.findall(r'<item data="([^"]+)"', r.text)
+        for m in matches:
+            parts = m.split('|')
+            if len(parts) >= 5:
+                dt = pd.to_datetime(parts[0]) # YYYYMMDD
+                close_price = int(parts[4])   # 종가
+                if start_year <= dt.year <= end_year:
+                    all_prices[dt] = close_price
+    except: pass
     return pd.Series(all_prices).sort_index()
 
 # ==========================================
@@ -167,11 +139,12 @@ def scrape_dividend_data(code, years_tuple):
 
     return div_map
 
-def fetch_all_years_data(code, years, token, is_etf=True):
+def fetch_all_years_data(code, years, is_etf=True):
     empty_series = pd.Series(dtype=float, index=pd.DatetimeIndex([]))
     if not code: return empty_series, {y: [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)] for y in years}
     
-    prices = fetch_kis_prices(code, min(years), max(years), token) if token else empty_series
+    # 네이버 금융 API로 대체 호출!
+    prices = fetch_naver_prices(code, min(years), max(years))
     if prices.empty: prices = empty_series
     
     if not is_etf:
@@ -201,7 +174,7 @@ with st.sidebar:
 # 실행 영역
 # ==========================================
 if run_btn:
-    with st.spinner('서버에서 실시간 데이터를 수집하며 백테스트를 진행 중입니다... (최초 1회만 약 10초 소요)'):
+    with st.spinner('서버에서 실시간 데이터를 수집하며 백테스트를 진행 중입니다...'):
         
         try:
             INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input))
@@ -249,15 +222,15 @@ if run_btn:
         else:
             RUN_MODE, K_CODE, T_CODE = 'SWING', '498400', '472150'
 
-        KIS_TOKEN = get_kis_token()
-        K_NAME = fetch_stock_name(K_CODE, KIS_TOKEN)
-        T_NAME = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
+        K_NAME = fetch_stock_name(K_CODE)
+        T_NAME = fetch_stock_name(T_CODE) if T_CODE else ""
         ETF_BRANDS = ['KODEX', 'TIGER', 'ACE', 'SOL', 'RISE', 'PLUS', 'ARIRANG', 'KOSEF', 'HANARO', 'KBSTAR', 'TIMEFOLIO', 'TREX', '마이티', 'HK', '히어로즈']
         K_IS_ETF = any(brand in K_NAME.upper() for brand in ETF_BRANDS)
         T_IS_ETF = any(brand in T_NAME.upper() for brand in ETF_BRANDS) if T_NAME else False
 
-        k_prices_all, k_divs_all = fetch_all_years_data(K_CODE, YEAR_RANGE, KIS_TOKEN, K_IS_ETF)
-        t_prices_all, t_divs_all = fetch_all_years_data(T_CODE, YEAR_RANGE, KIS_TOKEN, T_IS_ETF)
+        # 수정됨: 토큰 없이 호출
+        k_prices_all, k_divs_all = fetch_all_years_data(K_CODE, YEAR_RANGE, K_IS_ETF)
+        t_prices_all, t_divs_all = fetch_all_years_data(T_CODE, YEAR_RANGE, T_IS_ETF)
 
         history, cash, k_sh, t_sh, total_div, first_buy_done = [], INITIAL_CASH, 0, 0, 0, False
 
@@ -337,7 +310,6 @@ if run_btn:
                     f = k_p.index[k_p.index > d_k_pay]
                     d_k_sell = f[0] if not f.empty and f[0].month == m else d_k_pay
 
-                # [중요 수정] KODEX 매도 후 TIGER 매수 시, 에러(KeyError)를 방지하는 안전한 가격 검색 로직
                 if d_k_sell and k_sh > 0:
                     p = int(k_p.loc[d_k_sell]); sell = k_sh * p; cash += sell
                     log(y, m, d_k_sell, "매도", K_CODE, p, k_sh, sell, 0, cash, 0); k_sh = 0
@@ -351,7 +323,6 @@ if run_btn:
                                 t_sh = cash // p_t; cash -= (t_sh*p_t)
                                 log(y, m, d_k_sell, "매수", T_CODE, p_t, t_sh, t_sh*p_t, 0, cash, t_sh*p_t)
                 
-                # [중요 수정] 월말 평가 시에도 각 종목의 고유 날짜를 참조하여 KeyError 방지
                 k_p_m = k_p[k_p.index.month == m] if isinstance(k_p.index, pd.DatetimeIndex) else pd.Series()
                 t_p_m = t_p[t_p.index.month == m] if isinstance(t_p.index, pd.DatetimeIndex) else pd.Series()
                 d_last_k = k_p_m.index[-1] if not k_p_m.empty else None
