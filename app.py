@@ -187,7 +187,7 @@ def fmt_man(val):
 with st.sidebar:
     st.header("⚙️ 시뮬레이션 설정")
     cash_input = st.text_input("초기 투자금 (원)", "40000000")
-    period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.2)", "2025.1~2026.4")
+    period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.2)", "2025~2026")
     etf_input = st.text_input("종목 코드 (쉼표 구분)", "498400, 472150")
     div_option = st.radio("배당금 처리", ["재투자", "인출(생활비)"], index=0)
     run_btn = st.button("시뮬레이션 실행", type="primary")
@@ -199,7 +199,7 @@ if not run_btn:
 # 실행 영역
 # ==========================================
 if run_btn:
-    with st.spinner('네이버 증권 데이터를 스크래핑 중입니다. 잠시만 기다려주세요...'):
+    with st.spinner('시뮬레이션 중입니다. 잠시만 기다려주세요'):
         now = datetime.datetime.now()
         curr_year, curr_month = now.year, now.month
         INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input)) if cash_input else 0
@@ -245,11 +245,9 @@ if run_btn:
         if T_CODE: display_name += f", {T_NAME_RAW.split(' (')[0]}"
         st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 백테스트")
         
-        # [핵심] fallback으로 들어가는 빈 데이터에도 안전한 날짜 인덱스를 명시적으로 부여
         k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts) if K_CODE else pd.Series(dtype=float, index=pd.to_datetime([]))
         t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts) if T_CODE else pd.Series(dtype=float, index=pd.to_datetime([]))
         
-        # 데이터 수집 실패 알림
         if K_CODE and k_prices_all.empty:
             st.error(f"⚠️ 네이버 금융에서 '{K_CODE}'의 가격 데이터를 가져오지 못했습니다. 일시적 차단이거나 종목 코드가 잘못되었습니다.")
             
@@ -304,7 +302,6 @@ if run_btn:
                                     cash -= (add_sh * p_re); k_sh += add_sh
                                     history.append({'연도':y,'월':f"{m}월",'날짜':dt_re.strftime('%y/%m/%d'),'구분':'재투자','종목':K_CODE,'단가':p_re,'수량':add_sh,'거래금액':add_sh*p_re,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_re),'배당률':0.0})
 
-                # [핵심] 빈 데이터 객체에서 .year 접근시 AttributeError 원천 차단
                 k_m_prices = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)] if not k_prices_all.empty else k_prices_all
                 if not k_m_prices.empty:
                     last_dt = k_m_prices.index[-1]
@@ -377,7 +374,6 @@ if run_btn:
                             t_sh = cash // p_t; cash -= (t_sh*p_t)
                             history.append({'연도':y,'월':f"{m}월",'날짜':dt_switch.strftime('%y/%m/%d'),'구분':'매수','종목':T_CODE,'단가':p_t,'수량':t_sh,'거래금액':t_sh*p_t,'수령배당금':0,'현금잔고':cash,'총자산':cash+(t_sh*p_t),'배당률':0.0})
 
-                # [핵심] 빈 데이터 객체에서 .year 접근시 AttributeError 원천 차단
                 k_m_prices = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)] if not k_prices_all.empty else k_prices_all
                 t_m_prices = t_prices_all[(t_prices_all.index.year == y) & (t_prices_all.index.month == m)] if not t_prices_all.empty else t_prices_all
                 
