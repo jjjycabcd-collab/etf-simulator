@@ -8,7 +8,7 @@ import time
 import json
 import datetime
 import shutil
-import xml.etree.ElementTree as ET  # 네이버 fchart XML 파싱용 추가
+import io  # pandas read_html 파싱용 추가
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -50,10 +50,11 @@ def fetch_stock_name(code):
     return f"{name} ({code})"
 
 def fetch_actual_prices(code, start_date, end_date):
-    """네이버 증권 차트 API에서 일별 종가 수집"""
+    """네이버 증권 일별 시세표에서 실제 종가(수정주가 미적용) 수집"""
     if not code: return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
     
-    price_file = f"price_market_naver_{code}.json"
+    # 캐시 파일명 변경 (기존 수정주가 캐시와 충돌 방지)
+    price_file = f"price_market_naver_unadj_{code}.json"
     if os.path.exists(price_file):
         try:
             with open(price_file, "r") as f:
@@ -63,24 +64,42 @@ def fetch_actual_prices(code, start_date, end_date):
                 return series
         except: pass
 
-    # 네이버 fchart API 호출 (count=3000 이면 약 12년치 일봉 데이터)
-    url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=3000&requestType=0"
     all_prices = {}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    stop_flag = False
     
-    try:
-        res = requests.get(url)
-        if res.status_code == 200:
-            root = ET.fromstring(res.text)
-            for item in root.findall('.//item'):
-                data = item.get('data')
-                if data:
-                    parts = data.split('|')
-                    date_str = parts[0]
-                    close_price = int(parts[4])
-                    all_prices[pd.to_datetime(date_str)] = close_price
-    except Exception as e:
-        pass
-    
+    # 최대 300페이지(약 3000거래일 = 12년치) 탐색
+    for page in range(1, 301):
+        url = f"https://finance.naver.com/item/sise_day.naver?code={code}&page={page}"
+        try:
+            res = requests.get(url, headers=headers)
+            res.encoding = 'euc-kr' # 네이버 금융 한글 깨짐 방지
+            
+            # pandas의 read_html로 표 데이터 즉시 파싱
+            df_page = pd.read_html(io.StringIO(res.text), header=0)[0]
+            df_page = df_page.dropna() # 빈 줄 제거
+            
+            if df_page.empty:
+                break
+                
+            for _, row in df_page.iterrows():
+                date_str = row['날짜']
+                price = int(row['종가'])
+                dt = pd.to_datetime(date_str.replace('.', '-'))
+                
+                all_prices[dt] = price
+                
+                # 요청한 시작일보다 과거 데이터가 충분히 수집되면 중단
+                if dt < start_date - pd.Timedelta(days=10):
+                    stop_flag = True
+                    break
+                    
+            if stop_flag:
+                break
+                
+        except Exception as e:
+            break
+            
     price_series = pd.Series(all_prices).sort_index()
     
     try:
@@ -169,7 +188,7 @@ if not run_btn:
 # 실행 영역
 # ==========================================
 if run_btn:
-    with st.spinner('네이버 증권에서 실시간 데이터를 수집하며 백테스트 중입니다...'):
+    with st.spinner('네이버 증권에서 실제 종가 데이터를 수집하며 백테스트 중입니다...'):
         now = datetime.datetime.now()
         curr_year, curr_month = now.year, now.month
         INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input)) if cash_input else 0
