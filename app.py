@@ -21,16 +21,17 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="ETF 배당 백테스트", layout="wide")
 
 # ==========================================
-# API 키 설정
+# [중요] KIS 토큰 전역 변수 초기화 (NameError 방지)
 # ==========================================
+KIS_TOKEN = None
+
+# API 키 설정
 try:
     KIS_APP_KEY = st.secrets["KIS_APP_KEY"]
     KIS_APP_SECRET = st.secrets["KIS_APP_SECRET"]
 except:
     KIS_APP_KEY = "YOUR_APP_KEY_HERE"
     KIS_APP_SECRET = "YOUR_APP_SECRET_HERE"
-
-KIS_TOKEN = None
 
 # ==========================================
 # 함수 정의부
@@ -59,12 +60,12 @@ def fetch_stock_name(code, token):
         except: pass
     return f"종목 ({code})"
 
-# [수정] 실제 시장 종가(Market Price) 수집 및 캐시 강제 갱신
+# [수정] 13,277원 오기입 방지를 위해 메모리 캐시 삭제 및 파일명 변경
 def fetch_actual_prices(code, start_date, end_date, token):
     if not code: return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
     
-    # 캐시 파일명 변경하여 기존 잘못된 데이터 강제 삭제
-    price_file = f"price_market_v2_{code}.json"
+    # 캐시 파일명 강제 변경 (V3)
+    price_file = f"price_final_v3_{code}.json"
     if os.path.exists(price_file):
         try:
             with open(price_file, "r") as f:
@@ -77,22 +78,19 @@ def fetch_actual_prices(code, start_date, end_date, token):
     headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST03010100", "custtype": "P"}
     all_prices, s_dt, e_dt = {}, start_date.strftime('%Y%m%d'), end_date.strftime('%Y%m%d')
     current_end = e_dt
-    
     while True:
-        # FID_ORG_ADJ_PRC: "0" (반드시 실제 주가로 가져옴)
+        # FID_ORG_ADJ_PRC: "0" (반드시 원본 종가로 수집)
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": s_dt, "FID_INPUT_DATE_2": current_end, "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"} 
         try:
             res = requests.get(url, headers=headers, params=params)
             data = res.json()
             if data['rt_cd'] != '0' or not data.get('output2'): break
             for row in data['output2']:
-                if row['stck_bsop_date']:
-                    all_prices[pd.to_datetime(row['stck_bsop_date'])] = int(row['stck_clpr'])
+                if row['stck_bsop_date']: all_prices[pd.to_datetime(row['stck_bsop_date'])] = int(row['stck_clpr'])
             oldest = data['output2'][-1]['stck_bsop_date']
             if oldest <= s_dt or len(data['output2']) < 100: break
             current_end = (pd.to_datetime(oldest) - pd.Timedelta(days=1)).strftime('%Y%m%d')
         except: break
-    
     price_series = pd.Series(all_prices).sort_index()
     try:
         with open(price_file, "w") as f:
@@ -180,6 +178,7 @@ if run_btn:
         curr_year, curr_month = now.year, now.month
         INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input))
         
+        # [수정] 날짜 파싱 (2025.1 소수점 완벽 대응)
         def parse_date_str(s, is_end=False):
             if '.' in s:
                 parts = s.split('.'); return int(parts[0]), int(parts[1])
@@ -215,7 +214,7 @@ if run_btn:
         K_NAME_RAW = fetch_stock_name(K_CODE, KIS_TOKEN)
         T_NAME_RAW = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
         
-        # [수정] 상단 타이틀 형식 반영
+        # [수정] 타이틀 동적 생성
         display_name = f"{K_NAME_RAW.split(' (')[0]}"
         if T_CODE: display_name += f", {T_NAME_RAW.split(' (')[0]}"
         st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 백테스트 리포트")
@@ -238,7 +237,7 @@ if run_btn:
         for y, m in target_ym:
             k_d, t_d = k_divs_all[y][m-1], t_divs_all.get(y, [None]*12)[m-1] if T_CODE else None
             
-            # TIGER(T) 매도 및 KODEX(K) 매수 (SWING)
+            # T 배당/스윙
             if T_CODE and t_sh > 0:
                 if t_d['val'] > 0:
                     dt, p = get_safe_price(t_prices_all, y, m, t_d['pay_day'])
@@ -254,14 +253,12 @@ if run_btn:
                         k_sh = cash // p_k; cash -= (k_sh*p_k)
                         history.append({'연도':y,'월':f"{m}월",'날짜':dt_k.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p_k,'수량':k_sh,'거래금액':k_sh*p_k,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_k),'배당률':0.0})
 
-            # 초기 매수 (첫 달)
             if not first_buy:
                 dt, p = get_safe_price(k_prices_all, y, m, 1)
                 if dt:
                     k_sh = cash // p; cash -= (k_sh*p); first_buy = True
                     history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p,'수량':k_sh,'거래금액':k_sh*p,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':0.0})
 
-            # KODEX(K) 매도 및 TIGER(T) 매수
             if k_sh > 0:
                 if k_d['val'] > 0:
                     dt, p = get_safe_price(k_prices_all, y, m, k_d['pay_day'])
@@ -301,6 +298,7 @@ if run_btn:
             monthly_summary.append({'기간': f"{y}.{m:02d}", '주당배당금': m_dps, '배당률': m_yield, '배당금': m_div, '총자산': m_final, '증감': m_final - prev_asset})
             prev_asset = m_final
 
+        # [수정] 총 수익금 및 수익률 색상
         total_profit = assets[-1] - INITIAL_CASH
         profit_color = "#dc2626" if total_profit > 0 else "#2563eb"
 
@@ -329,7 +327,6 @@ if run_btn:
                 .buy {{ background: #ef4444; }} .sell {{ background: #3b82f6; }} .div {{ background: #10b981; }} .eval {{ background: #94a3b8; }}
                 .row-div {{ background-color: #f0fdf4 !important; }} .div-val {{ color: #166534; font-weight: 800; }}
                 .note-box {{ margin-top: 15px; padding: 10px; font-size: 13px; color: #64748b; line-height: 1.6; }}
-                @media (max-width: 768px) {{ .card-grid {{ grid-template-columns: repeat(2, 1fr); }} }}
             </style>
         </head>
         <body>
