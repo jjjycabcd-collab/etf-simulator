@@ -165,7 +165,8 @@ def fmt_man(val):
 with st.sidebar:
     st.header("⚙️ 시뮬레이션 설정")
     cash_input = st.text_input("초기 투자금 (원)", "40000000")
-    period_input = st.text_input("테스트 기간 (예: 2025.1~2026)", "2025.1~2026.4")
+    # [수정] 입력 안내 문구 상세화
+    period_input = st.text_input("백테스트 기간 (예: 2025~2026 또는 2025.1~2026)", "2025.1~2026.4")
     etf_input = st.text_input("종목 코드 (쉼표 구분)", "498400, 472150")
     div_option = st.radio("배당금 처리", ["재투자", "인출(생활비)"], index=0)
     run_btn = st.button("시뮬레이션 실행", type="primary")
@@ -360,7 +361,6 @@ if run_btn:
 
         df_hist = pd.DataFrame(history)
         
-        # [핵심 방어막] 데이터가 전혀 없어서 history 배열이 비어있을 경우 발생하는 KeyError('연도') 방지
         if df_hist.empty:
             df_hist = pd.DataFrame(columns=['연도', '월', '날짜', '구분', '종목', '단가', '수량', '거래금액', '수령배당금', '현금잔고', '총자산', '배당률'])
 
@@ -375,7 +375,6 @@ if run_btn:
             monthly_summary.append({'기간': f"{y}.{m:02d}", '주당배당금': m_dps, '배당률': m_yield, '배당금': m_div, '총자산': m_final, '증감': m_final - prev_asset})
             prev_asset = m_final
 
-        # [에러 방지] assets 배열이 비어있을 경우 (API 장애 등으로 데이터가 없을 때) IndexError 방어
         last_asset = assets[-1] if assets else INITIAL_CASH
 
         if div_option == "재투자":
