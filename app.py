@@ -59,45 +59,33 @@ def fetch_stock_name(code, token):
         except: pass
     return f"종목 ({code})"
 
-# [핵심 수정] 수정주가가 아닌 '실제 종가' 수집 로직
 def fetch_actual_prices(code, start_date, end_date, token):
     if not code: return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
-    
-    # 캐시 파일 이름 변경 (실제 종가 전용 데이터임을 구분)
     price_file = f"price_market_{code}.json"
     if os.path.exists(price_file):
         try:
             with open(price_file, "r") as f:
                 cached = json.load(f)
             series = pd.Series({pd.to_datetime(k): v for k, v in cached.items()}).sort_index()
-            # 요청한 시작 날짜가 파일 내 데이터 범위에 포함되는지 확인
-            if not series.empty and series.index[0] <= start_date:
-                return series
+            if not series.empty and series.index[0] <= start_date: return series
         except: pass
 
     url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
     headers = {"content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST03010100", "custtype": "P"}
-    
-    all_prices = {}
-    s_dt = start_date.strftime('%Y%m%d')
-    e_dt = end_date.strftime('%Y%m%d')
+    all_prices, s_dt, e_dt = {}, start_date.strftime('%Y%m%d'), end_date.strftime('%Y%m%d')
     current_end = e_dt
-    
     while True:
-        # FID_ORG_ADJ_PRC: "0" (0:실제주가, 1:수정주가)
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": s_dt, "FID_INPUT_DATE_2": current_end, "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"} 
         try:
             res = requests.get(url, headers=headers, params=params)
             data = res.json()
             if data['rt_cd'] != '0' or not data.get('output2'): break
             for row in data['output2']:
-                if row['stck_bsop_date']:
-                    all_prices[pd.to_datetime(row['stck_bsop_date'])] = int(row['stck_clpr'])
+                if row['stck_bsop_date']: all_prices[pd.to_datetime(row['stck_bsop_date'])] = int(row['stck_clpr'])
             oldest = data['output2'][-1]['stck_bsop_date']
             if oldest <= s_dt or len(data['output2']) < 100: break
             current_end = (pd.to_datetime(oldest) - pd.Timedelta(days=1)).strftime('%Y%m%d')
         except: break
-    
     price_series = pd.Series(all_prices).sort_index()
     try:
         with open(price_file, "w") as f:
@@ -220,9 +208,10 @@ if run_btn:
         K_NAME_RAW = fetch_stock_name(K_CODE, KIS_TOKEN)
         T_NAME_RAW = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
         
+        # [수정] 상단 타이틀 형식 변경 (백테스트 리포트 명칭 추가)
         display_name = f"{K_NAME_RAW.split(' (')[0]}"
         if T_CODE: display_name += f", {T_NAME_RAW.split(' (')[0]}"
-        st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 리포트")
+        st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 백테스트 리포트")
         
         k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts, KIS_TOKEN)
         t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts, KIS_TOKEN) if T_CODE else pd.Series(dtype=float)
@@ -302,6 +291,10 @@ if run_btn:
             monthly_summary.append({'기간': f"{y}.{m:02d}", '주당배당금': m_dps, '배당률': m_yield, '배당금': m_div, '총자산': m_final, '증감': m_final - prev_asset})
             prev_asset = m_final
 
+        # [수정] 총 수익금 계산
+        total_profit = assets[-1] - INITIAL_CASH
+        profit_color = "#dc2626" if total_profit > 0 else "#2563eb"
+
         summary_rows = "".join([f"<tr><td>{s['기간']}</td><td>{int(s['주당배당금']):,}</td><td style='color:#f59e0b; font-weight:600;'>{s['배당률']:.2f}%</td><td>{fmt_man(s['배당금'])}</td><td><b>{fmt_man(s['총자산'])}</b></td><td style='color:{'#dc2626' if s['증감']>0 else '#2563eb'}; font-weight:600;'>{fmt_man(s['증감'])}</td></tr>" for s in monthly_summary[::-1]])
         def get_cls(cat): return "buy" if "매수" in cat else "sell" if "매도" in cat else "div" if "배당" in cat else "eval"
         df_display = df_hist.sort_values(by=['날짜'], ascending=True)
@@ -314,8 +307,10 @@ if run_btn:
             <meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
                 body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; color: #334155; }}
-                .card-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 25px; }}
+                .card-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 25px; }}
                 .card {{ background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-align: center; }}
+                .card h3 {{ font-size: 13px; margin: 0 0 8px 0; color: #64748b; font-weight: 600; }}
+                .card p {{ font-size: 16px; margin: 0; word-break: keep-all; }}
                 .section-title {{ font-size: 16px; font-weight: 700; margin: 30px 0 12px 0; border-left: 4px solid #3b82f6; padding-left: 8px; }}
                 .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 280px; margin-bottom: 20px; }}
                 table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; }}
@@ -325,6 +320,7 @@ if run_btn:
                 .buy {{ background: #ef4444; }} .sell {{ background: #3b82f6; }} .div {{ background: #10b981; }} .eval {{ background: #94a3b8; }}
                 .row-div {{ background-color: #f0fdf4 !important; }} .div-val {{ color: #166534; font-weight: 800; }}
                 .note-box {{ margin-top: 15px; padding: 10px; font-size: 13px; color: #64748b; line-height: 1.6; }}
+                @media (max-width: 768px) {{ .card-grid {{ grid-template-columns: repeat(2, 1fr); }} }}
             </style>
         </head>
         <body>
@@ -332,6 +328,7 @@ if run_btn:
                 <div class="card"><h3>초기 투자금</h3><p style="color:#3b82f6; font-weight:700;">{fmt_man(INITIAL_CASH)}원</p></div>
                 <div class="card"><h3>최종 자산</h3><p style="color:#dc2626; font-weight:700;">{fmt_man(assets[-1])}원</p></div>
                 <div class="card"><h3>누적 배당금</h3><p style="color:#166534; font-weight:700;">{fmt_man(int(total_div))}원</p></div>
+                <div class="card"><h3>총 수익금</h3><p style="color:{profit_color}; font-weight:700;">{fmt_man(total_profit)}원</p></div>
                 <div class="card"><h3>총 수익률</h3><p style="color:#dc2626; font-weight:700;">{((assets[-1]/INITIAL_CASH)-1)*100:.2f}%</p></div>
             </div>
             <div class="section-title">📉 배당금 및 주당 배당금 추이</div>
