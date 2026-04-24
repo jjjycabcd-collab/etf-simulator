@@ -46,13 +46,11 @@ def get_kis_token():
 
 @st.cache_data(ttl=86400)
 def fetch_stock_name(code, token):
-    # [수정] KIS API 장애 시를 대비한 자체 종목명 사전 추가
     fallback_names = {
         '498400': 'KODEX 200타겟위클리커버드콜', 
         '472150': 'TIGER 배당커버드콜액티브'
     }
     name = fallback_names.get(code, "종목")
-    
     if not code: return ""
     if token:
         url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/search-info"
@@ -169,10 +167,7 @@ with st.sidebar:
     cash_input = st.text_input("초기 투자금 (원)", "40000000")
     period_input = st.text_input("테스트 기간 (예: 2025.1~2026)", "2025.1~2026.4")
     etf_input = st.text_input("종목 코드 (쉼표 구분)", "498400, 472150")
-    
-    # [추가] 배당금 처리 옵션 추가
     div_option = st.radio("배당금 처리", ["재투자", "인출(생활비)"], index=0)
-    
     run_btn = st.button("시뮬레이션 실행", type="primary")
 
 if not run_btn:
@@ -185,7 +180,7 @@ if run_btn:
     with st.spinner('실시간 시장가 데이터를 수집하며 백테스트 중입니다...'):
         now = datetime.datetime.now()
         curr_year, curr_month = now.year, now.month
-        INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input))
+        INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input)) if cash_input else 0
         
         def parse_date_str(s, is_end=False):
             if '.' in s:
@@ -218,18 +213,19 @@ if run_btn:
 
         KIS_TOKEN = get_kis_token()
         codes = [c.strip() for c in etf_input.replace(',', ' ').split() if c.strip().isdigit()]
-        K_CODE = codes[0]; T_CODE = codes[1] if len(codes) > 1 else None
+        K_CODE = codes[0] if codes else ""
+        T_CODE = codes[1] if len(codes) > 1 else None
         
-        K_NAME_RAW = fetch_stock_name(K_CODE, KIS_TOKEN)
+        K_NAME_RAW = fetch_stock_name(K_CODE, KIS_TOKEN) if K_CODE else "알수없음"
         T_NAME_RAW = fetch_stock_name(T_CODE, KIS_TOKEN) if T_CODE else ""
         
         display_name = f"{K_NAME_RAW.split(' (')[0]}"
         if T_CODE: display_name += f", {T_NAME_RAW.split(' (')[0]}"
         st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 백테스트")
         
-        k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts, KIS_TOKEN)
+        k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts, KIS_TOKEN) if K_CODE else pd.Series(dtype=float)
         t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts, KIS_TOKEN) if T_CODE else pd.Series(dtype=float)
-        k_divs_all = scrape_dividend_data(K_CODE, tuple(YEAR_RANGE))
+        k_divs_all = scrape_dividend_data(K_CODE, tuple(YEAR_RANGE)) if K_CODE else {}
         t_divs_all = scrape_dividend_data(T_CODE, tuple(YEAR_RANGE)) if T_CODE else {}
 
         history, cash, k_sh, t_sh, total_div, first_buy = [], INITIAL_CASH, 0, 0, 0, False
@@ -246,13 +242,13 @@ if run_btn:
             return (None, None)
 
         for y, m in target_ym:
-            k_d = k_divs_all[y][m-1]
+            k_d = k_divs_all.get(y, [None]*12)[m-1] if K_CODE else None
             t_d = t_divs_all.get(y, [None]*12)[m-1] if T_CODE else None
             
             # ==================================================
             # 단일 종목 (SINGLE) 모드 로직
             # ==================================================
-            if not T_CODE:
+            if not T_CODE and K_CODE:
                 if not first_buy:
                     dt, p = get_safe_price(k_prices_all, y, m, 1)
                     if dt:
@@ -260,19 +256,14 @@ if run_btn:
                         history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p,'수량':k_sh,'거래금액':k_sh*p,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':0.0})
 
                 dt_pay = None
-                if k_sh > 0 and k_d['val'] > 0:
+                if k_sh > 0 and k_d and k_d['val'] > 0:
                     dt, p = get_safe_price(k_prices_all, y, m, k_d['pay_day'])
                     if dt:
                         dt_pay = dt
                         dv = k_sh * k_d['val']; total_div += dv
-                        
-                        # [수정] 재투자 시에만 계좌 현금에 추가, 인출 시엔 더하지 않음
-                        if div_option == "재투자":
-                            cash += dv
-                            
+                        if div_option == "재투자": cash += dv
                         history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':K_CODE,'단가':k_d['val'],'수량':k_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':k_d['yield']})
                 
-                # 재투자를 선택한 경우에만 익일 매수 진행
                 if div_option == "재투자" and dt_pay:
                     found = k_prices_all.index[k_prices_all.index > dt_pay]
                     if not found.empty and found[0].year == y and found[0].month == m:
@@ -281,8 +272,7 @@ if run_btn:
                         if cash >= p_re:
                             add_sh = cash // p_re
                             if add_sh > 0:
-                                cash -= (add_sh * p_re)
-                                k_sh += add_sh
+                                cash -= (add_sh * p_re); k_sh += add_sh
                                 history.append({'연도':y,'월':f"{m}월",'날짜':dt_re.strftime('%y/%m/%d'),'구분':'재투자','종목':K_CODE,'단가':p_re,'수량':add_sh,'거래금액':add_sh*p_re,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_re),'배당률':0.0})
 
                 k_m_prices = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)]
@@ -294,18 +284,15 @@ if run_btn:
             # ==================================================
             # 스윙 교체 (SWING) 모드 로직
             # ==================================================
-            else:
+            elif T_CODE and K_CODE:
                 if t_sh > 0:
                     dt_pay = None
-                    if t_d['val'] > 0:
+                    if t_d and t_d['val'] > 0:
                         dt, p = get_safe_price(t_prices_all, y, m, t_d['pay_day'])
                         if dt:
                             dt_pay = dt
                             dv = t_sh * t_d['val']; total_div += dv
-                            
-                            # [수정] 재투자 시에만 계좌 현금에 추가
                             if div_option == "재투자": cash += dv
-                                
                             history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':T_CODE,'단가':t_d['val'],'수량':t_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(t_sh*p),'배당률':t_d['yield']})
                     
                     dt_switch = None
@@ -313,7 +300,7 @@ if run_btn:
                         found = t_prices_all.index[t_prices_all.index > dt_pay]
                         if not found.empty and found[0].year == y and found[0].month == m: dt_switch = found[0]
                     else:
-                        dt_s, _ = get_safe_price(t_prices_all, y, m, t_d['reinv_day'])
+                        dt_s, _ = get_safe_price(t_prices_all, y, m, t_d['reinv_day'] if t_d else 18)
                         dt_switch = dt_s
 
                     if dt_switch:
@@ -334,15 +321,12 @@ if run_btn:
 
                 if k_sh > 0:
                     dt_pay = None
-                    if k_d['val'] > 0:
+                    if k_d and k_d['val'] > 0:
                         dt, p = get_safe_price(k_prices_all, y, m, k_d['pay_day'])
                         if dt:
                             dt_pay = dt
                             dv = k_sh * k_d['val']; total_div += dv
-                            
-                            # [수정] 재투자 시에만 계좌 현금에 추가
                             if div_option == "재투자": cash += dv
-                                
                             history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':K_CODE,'단가':k_d['val'],'수량':k_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':k_d['yield']})
                     
                     dt_switch = None
@@ -350,7 +334,7 @@ if run_btn:
                         found = k_prices_all.index[k_prices_all.index > dt_pay]
                         if not found.empty and found[0].year == y and found[0].month == m: dt_switch = found[0]
                     else:
-                        dt_s, _ = get_safe_price(k_prices_all, y, m, k_d['reinv_day'])
+                        dt_s, _ = get_safe_price(k_prices_all, y, m, k_d['reinv_day'] if k_d else 18)
                         dt_switch = dt_s
 
                     if dt_switch:
@@ -375,6 +359,11 @@ if run_btn:
                     history.append({'연도':y,'월':f"{m}월",'날짜':last_dt.strftime('%y/%m/%d'),'구분':'평가','종목':cur_ticker,'단가':cur_p,'수량':cur_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+val_k+val_t,'배당률':0.0})
 
         df_hist = pd.DataFrame(history)
+        
+        # [핵심 방어막] 데이터가 전혀 없어서 history 배열이 비어있을 경우 발생하는 KeyError('연도') 방지
+        if df_hist.empty:
+            df_hist = pd.DataFrame(columns=['연도', '월', '날짜', '구분', '종목', '단가', '수량', '거래금액', '수령배당금', '현금잔고', '총자산', '배당률'])
+
         monthly_summary, labels, divs, dps_list, assets, prev_asset = [], [], [], [], [], INITIAL_CASH
         for y, m in target_ym:
             m_data = df_hist[(df_hist['연도'] == y) & (df_hist['월'] == f"{m}월")]
@@ -386,20 +375,22 @@ if run_btn:
             monthly_summary.append({'기간': f"{y}.{m:02d}", '주당배당금': m_dps, '배당률': m_yield, '배당금': m_div, '총자산': m_final, '증감': m_final - prev_asset})
             prev_asset = m_final
 
-        # [수정] 인출(생활비) 선택 시, 생활비로 쓴 배당금도 경제적 이득이므로 총 수익금에 포함
+        # [에러 방지] assets 배열이 비어있을 경우 (API 장애 등으로 데이터가 없을 때) IndexError 방어
+        last_asset = assets[-1] if assets else INITIAL_CASH
+
         if div_option == "재투자":
-            total_profit = assets[-1] - INITIAL_CASH
-            profit_rate = (total_profit / INITIAL_CASH) * 100
+            total_profit = last_asset - INITIAL_CASH
+            profit_rate = (total_profit / INITIAL_CASH) * 100 if INITIAL_CASH else 0
         else:
-            total_profit = (assets[-1] + total_div) - INITIAL_CASH
-            profit_rate = (total_profit / INITIAL_CASH) * 100
+            total_profit = (last_asset + total_div) - INITIAL_CASH
+            profit_rate = (total_profit / INITIAL_CASH) * 100 if INITIAL_CASH else 0
             
         profit_color = "#dc2626" if total_profit > 0 else "#2563eb"
 
         summary_rows = "".join([f"<tr><td>{s['기간']}</td><td>{int(s['주당배당금']):,}</td><td style='color:#f59e0b; font-weight:600;'>{s['배당률']:.2f}%</td><td>{fmt_man(s['배당금'])}</td><td><b>{fmt_man(s['총자산'])}</b></td><td style='color:{'#dc2626' if s['증감']>0 else '#2563eb'}; font-weight:600;'>{fmt_man(s['증감'])}</td></tr>" for s in monthly_summary[::-1]])
         def get_cls(cat): return "buy" if "매수" in cat or "재투자" in cat else "sell" if "매도" in cat else "div" if "배당" in cat else "eval"
         
-        df_display = df_hist.sort_values(by=['날짜'], ascending=True)
+        df_display = df_hist.sort_values(by=['날짜'], ascending=True) if not df_hist.empty else df_hist
         detailed_rows = "".join([f"<tr class='row-{get_cls(r['구분'])}'><td>{r['날짜']}</td><td><span class='badge {get_cls(r['구분'])}'>{r['구분']}</span></td><td style='text-align:center;'>{r['종목']}</td><td>{r['단가']:,}</td><td>{r['수량']:,}</td><td>{fmt_man(r['거래금액']) if r['거래금액']>0 else '-'}</td><td class='div-val'>{f'+{fmt_man(r['수령배당금'])}' if r['수령배당금']>0 else '-'}</td><td>{fmt_man(r['현금잔고'])}</td><td style='font-weight:700;'>{fmt_man(r['총자산'])}</td></tr>" for _, r in df_display.iterrows()])
 
         html_template = f"""
@@ -427,7 +418,7 @@ if run_btn:
         <body>
             <div class="card-grid">
                 <div class="card"><h3>초기 투자금</h3><p style="color:#3b82f6; font-weight:700;">{fmt_man(INITIAL_CASH)}원</p></div>
-                <div class="card"><h3>최종 자산</h3><p style="color:#dc2626; font-weight:700;">{fmt_man(assets[-1])}원</p></div>
+                <div class="card"><h3>최종 자산</h3><p style="color:#dc2626; font-weight:700;">{fmt_man(last_asset)}원</p></div>
                 <div class="card"><h3>누적 배당금</h3><p style="color:#166534; font-weight:700;">{fmt_man(int(total_div))}원</p></div>
                 <div class="card"><h3>총 수익금</h3><p style="color:{profit_color}; font-weight:700;">{fmt_man(total_profit)}원</p></div>
                 <div class="card"><h3>총 수익률</h3><p style="color:#dc2626; font-weight:700;">{profit_rate:.2f}%</p></div>
