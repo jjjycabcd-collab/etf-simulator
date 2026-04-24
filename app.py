@@ -320,4 +320,104 @@ if run_btn:
                     
                     dt_switch = None
                     if dt_pay:
-                        found = k_prices_all.index[k_prices_all.index > dt_pay
+                        found = k_prices_all.index[k_prices_all.index > dt_pay]
+                        if not found.empty and found[0].year == y and found[0].month == m:
+                            dt_switch = found[0]
+                    else:
+                        dt_s, _ = get_safe_price(k_prices_all, y, m, k_d['reinv_day'])
+                        dt_switch = dt_s
+
+                    if dt_switch:
+                        p_s = int(k_prices_all.loc[dt_switch])
+                        sell_amt = k_sh * p_s; cash += sell_amt
+                        history.append({'연도':y,'월':f"{m}월",'날짜':dt_switch.strftime('%y/%m/%d'),'구분':'매도','종목':K_CODE,'단가':p_s,'수량':k_sh,'거래금액':sell_amt,'수령배당금':0,'현금잔고':cash,'총자산':cash,'배당률':0.0}); k_sh = 0
+                        
+                        if dt_switch in t_prices_all.index:
+                            p_t = int(t_prices_all.loc[dt_switch])
+                            t_sh = cash // p_t; cash -= (t_sh*p_t)
+                            history.append({'연도':y,'월':f"{m}월",'날짜':dt_switch.strftime('%y/%m/%d'),'구분':'매수','종목':T_CODE,'단가':p_t,'수량':t_sh,'거래금액':t_sh*p_t,'수령배당금':0,'현금잔고':cash,'총자산':cash+(t_sh*p_t),'배당률':0.0})
+
+                k_m_prices = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)]
+                t_m_prices = t_prices_all[(t_prices_all.index.year == y) & (t_prices_all.index.month == m)]
+                if not k_m_prices.empty or not t_m_prices.empty:
+                    cur_ticker = K_CODE if k_sh > 0 else (T_CODE if t_sh > 0 else "-")
+                    cur_sh = k_sh if k_sh > 0 else t_sh
+                    cur_p = int(k_m_prices.iloc[-1]) if k_sh > 0 and not k_m_prices.empty else (int(t_m_prices.iloc[-1]) if t_sh > 0 and not t_m_prices.empty else 0)
+                    last_dt = k_m_prices.index[-1] if not k_m_prices.empty else t_m_prices.index[-1]
+                    val_k = k_sh * (int(k_m_prices.iloc[-1]) if not k_m_prices.empty else 0)
+                    val_t = t_sh * (int(t_m_prices.iloc[-1]) if not t_m_prices.empty else 0)
+                    history.append({'연도':y,'월':f"{m}월",'날짜':last_dt.strftime('%y/%m/%d'),'구분':'평가','종목':cur_ticker,'단가':cur_p,'수량':cur_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+val_k+val_t,'배당률':0.0})
+
+        df_hist = pd.DataFrame(history)
+        monthly_summary, labels, divs, dps_list, assets, prev_asset = [], [], [], [], [], INITIAL_CASH
+        for y, m in target_ym:
+            m_data = df_hist[(df_hist['연도'] == y) & (df_hist['월'] == f"{m}월")]
+            if m_data.empty: continue
+            m_div = m_data['수령배당금'].sum(); m_final = m_data.iloc[-1]['총자산']
+            m_dps = m_data[m_data['구분'] == '배당']['단가'].sum()
+            m_yield = m_data[m_data['구분'] == '배당']['배당률'].sum()
+            labels.append(f"{y}.{m}"); divs.append(int(m_div)); dps_list.append(int(m_dps)); assets.append(int(m_final))
+            monthly_summary.append({'기간': f"{y}.{m:02d}", '주당배당금': m_dps, '배당률': m_yield, '배당금': m_div, '총자산': m_final, '증감': m_final - prev_asset})
+            prev_asset = m_final
+
+        total_profit = assets[-1] - INITIAL_CASH
+        profit_color = "#dc2626" if total_profit > 0 else "#2563eb"
+
+        summary_rows = "".join([f"<tr><td>{s['기간']}</td><td>{int(s['주당배당금']):,}</td><td style='color:#f59e0b; font-weight:600;'>{s['배당률']:.2f}%</td><td>{fmt_man(s['배당금'])}</td><td><b>{fmt_man(s['총자산'])}</b></td><td style='color:{'#dc2626' if s['증감']>0 else '#2563eb'}; font-weight:600;'>{fmt_man(s['증감'])}</td></tr>" for s in monthly_summary[::-1]])
+        
+        # [수정] "재투자"도 "buy" 클래스 할당하여 빨간 뱃지 표시
+        def get_cls(cat): return "buy" if "매수" in cat or "재투자" in cat else "sell" if "매도" in cat else "div" if "배당" in cat else "eval"
+        
+        df_display = df_hist.sort_values(by=['날짜'], ascending=True)
+        detailed_rows = "".join([f"<tr class='row-{get_cls(r['구분'])}'><td>{r['날짜']}</td><td><span class='badge {get_cls(r['구분'])}'>{r['구분']}</span></td><td style='text-align:center;'>{r['종목']}</td><td>{r['단가']:,}</td><td>{r['수량']:,}</td><td>{fmt_man(r['거래금액']) if r['거래금액']>0 else '-'}</td><td class='div-val'>{f'+{fmt_man(r['수령배당금'])}' if r['수령배당금']>0 else '-'}</td><td>{fmt_man(r['현금잔고'])}</td><td style='font-weight:700;'>{fmt_man(r['총자산'])}</td></tr>" for _, r in df_display.iterrows()])
+
+        html_template = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+            <style>
+                body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; color: #334155; }}
+                .card-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 25px; }}
+                .card {{ background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-align: center; }}
+                .card h3 {{ font-size: 13px; margin: 0 0 8px 0; color: #64748b; font-weight: 600; }}
+                .card p {{ font-size: 16px; margin: 0; word-break: keep-all; }}
+                .section-title {{ font-size: 16px; font-weight: 700; margin: 30px 0 12px 0; border-left: 4px solid #3b82f6; padding-left: 8px; }}
+                .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 280px; margin-bottom: 20px; }}
+                table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; }}
+                th {{ background: #f1f5f9; padding: 12px; font-size: 12px; }}
+                td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; font-size: 12px; }}
+                .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; }}
+                .buy {{ background: #ef4444; }} .sell {{ background: #3b82f6; }} .div {{ background: #10b981; }} .eval {{ background: #94a3b8; }}
+                .row-div {{ background-color: #f0fdf4 !important; }} .div-val {{ color: #166534; font-weight: 800; }}
+                .note-box {{ margin-top: 15px; padding: 10px; font-size: 13px; color: #64748b; line-height: 1.6; }}
+            </style>
+        </head>
+        <body>
+            <div class="card-grid">
+                <div class="card"><h3>초기 투자금</h3><p style="color:#3b82f6; font-weight:700;">{fmt_man(INITIAL_CASH)}원</p></div>
+                <div class="card"><h3>최종 자산</h3><p style="color:#dc2626; font-weight:700;">{fmt_man(assets[-1])}원</p></div>
+                <div class="card"><h3>누적 배당금</h3><p style="color:#166534; font-weight:700;">{fmt_man(int(total_div))}원</p></div>
+                <div class="card"><h3>총 수익금</h3><p style="color:{profit_color}; font-weight:700;">{fmt_man(total_profit)}원</p></div>
+                <div class="card"><h3>총 수익률</h3><p style="color:#dc2626; font-weight:700;">{((assets[-1]/INITIAL_CASH)-1)*100:.2f}%</p></div>
+            </div>
+            <div class="section-title">📉 배당금 및 주당 배당금 추이</div>
+            <div class="chart-container"><canvas id="divChart"></canvas></div>
+            <div class="section-title">📈 자산 성장 추이</div>
+            <div class="chart-container"><canvas id="assetChart"></canvas></div>
+            <div class="section-title">📅 월별 요약 (최신순)</div>
+            <table><thead><tr><th>기간</th><th>주당배당</th><th>배당률</th><th>배당합계</th><th>기말자산</th><th>증감</th></tr></thead><tbody>{summary_rows}</tbody></table>
+            <div class="section-title">🔍 상세 거래 내역 (과거순)</div>
+            <table><thead><tr><th>날짜</th><th>구분</th><th>종목</th><th>단가</th><th>수량</th><th>거래금액</th><th>배당금</th><th>잔고</th><th>총자산</th></tr></thead><tbody>{detailed_rows}</tbody></table>
+            <div class="note-box">
+                ※ 재투자는 받은 배당금을 그 다음 거래일에 매매하는 걸로 가정했습니다.<br>
+                ※ 월말평가는 당월 마지막 거래일 종가와 수량을 계산한 값입니다.
+            </div>
+            <script>
+                new Chart(document.getElementById('divChart'), {{ type: 'bar', data: {{ labels: {json.dumps(labels)}, datasets: [{{ label: '배당금(원)', data: {json.dumps(divs)}, backgroundColor: '#10b981', yAxisID: 'y' }}, {{ label: '주당 배당금(원)', data: {json.dumps(dps_list)}, type: 'line', borderColor: '#f59e0b', yAxisID: 'y1', tension: 0.3 }}] }}, options: {{ responsive: true, maintainAspectRatio: false }} }});
+                new Chart(document.getElementById('assetChart'), {{ type: 'line', data: {{ labels: {json.dumps(labels)}, datasets: [{{ label: '총자산(원)', data: {json.dumps(assets)}, borderColor: '#ef4444', fill: false, tension: 0.1 }}] }}, options: {{ responsive: true, maintainAspectRatio: false }} }});
+            </script>
+        </body>
+        </html>
+        """
+        components.html(html_template, height=2200, scrolling=True)
