@@ -8,7 +8,6 @@ import time
 import json
 import datetime
 import shutil
-import io  # pandas read_html 파싱용 추가
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -51,14 +50,14 @@ def fetch_stock_name(code):
 
 def fetch_actual_prices(code, start_date, end_date):
     """네이버 증권 일별 시세표에서 실제 종가(수정주가 미적용) 수집"""
-    if not code: return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+    empty_series = pd.Series(dtype=float, index=pd.to_datetime([]))
+    if not code: return empty_series.copy()
     
     price_file = f"price_market_naver_unadj_{code}.json"
     if os.path.exists(price_file):
         try:
             with open(price_file, "r") as f:
                 cached = json.load(f)
-            # 캐시가 비어있지 않은 경우에만 로드 (빈 데이터로 인한 에러 방지)
             if cached:
                 series = pd.Series({pd.to_datetime(k): v for k, v in cached.items()}).sort_index()
                 if not series.empty and series.index[0] <= start_date and series.index[-1] >= end_date: 
@@ -66,41 +65,51 @@ def fetch_actual_prices(code, start_date, end_date):
         except: pass
 
     all_prices = {}
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    # 네이버 차단 방지용 상세 헤더
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Referer': f'https://finance.naver.com/item/sise.naver?code={code}',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+    }
     stop_flag = False
     
     for page in range(1, 301):
         url = f"https://finance.naver.com/item/sise_day.naver?code={code}&page={page}"
         try:
-            res = requests.get(url, headers=headers)
+            res = requests.get(url, headers=headers, timeout=5)
             res.encoding = 'euc-kr' 
             
-            df_page = pd.read_html(io.StringIO(res.text), header=0)[0]
-            df_page = df_page.dropna() 
+            # pandas read_html 오류 방지를 위해 BeautifulSoup으로 직접 파싱
+            soup = BeautifulSoup(res.text, 'html.parser')
+            rows = soup.find_all('tr')
+            page_has_data = False
             
-            if df_page.empty:
-                break
-                
-            for _, row in df_page.iterrows():
-                date_str = row['날짜']
-                price = int(row['종가'])
-                dt = pd.to_datetime(date_str.replace('.', '-'))
-                
-                all_prices[dt] = price
-                
-                if dt < start_date - pd.Timedelta(days=10):
-                    stop_flag = True
-                    break
+            for row in rows:
+                tds = row.find_all('td')
+                if len(tds) >= 7:
+                    date_td = tds[0].find('span', class_='tah')
+                    price_td = tds[1].find('span', class_='tah')
                     
-            if stop_flag:
+                    if date_td and price_td:
+                        date_str = date_td.text.strip()
+                        price_str = price_td.text.strip().replace(',', '')
+                        
+                        if date_str and price_str.isdigit():
+                            dt = pd.to_datetime(date_str.replace('.', '-'))
+                            all_prices[dt] = int(price_str)
+                            page_has_data = True
+                            
+                            if dt < start_date - pd.Timedelta(days=10):
+                                stop_flag = True
+                                
+            if not page_has_data or stop_flag:
                 break
                 
         except Exception as e:
             break
             
-    # [핵심] 데이터가 전혀 수집되지 않은 경우, AttributeError 방지를 위해 명시적으로 비어있는 DatetimeIndex 반환
     if not all_prices:
-        return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+        return empty_series.copy()
         
     price_series = pd.Series(all_prices).sort_index()
     
@@ -190,7 +199,7 @@ if not run_btn:
 # 실행 영역
 # ==========================================
 if run_btn:
-    with st.spinner('네이버 증권에서 실제 종가 데이터를 수집하며 백테스트 중입니다...'):
+    with st.spinner('네이버 증권 데이터를 스크래핑 중입니다. 잠시만 기다려주세요...'):
         now = datetime.datetime.now()
         curr_year, curr_month = now.year, now.month
         INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input)) if cash_input else 0
@@ -236,8 +245,14 @@ if run_btn:
         if T_CODE: display_name += f", {T_NAME_RAW.split(' (')[0]}"
         st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 백테스트")
         
-        k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts) if K_CODE else pd.Series(dtype=float)
-        t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts) if T_CODE else pd.Series(dtype=float)
+        # [핵심] fallback으로 들어가는 빈 데이터에도 안전한 날짜 인덱스를 명시적으로 부여
+        k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts) if K_CODE else pd.Series(dtype=float, index=pd.to_datetime([]))
+        t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts) if T_CODE else pd.Series(dtype=float, index=pd.to_datetime([]))
+        
+        # 데이터 수집 실패 알림
+        if K_CODE and k_prices_all.empty:
+            st.error(f"⚠️ 네이버 금융에서 '{K_CODE}'의 가격 데이터를 가져오지 못했습니다. 일시적 차단이거나 종목 코드가 잘못되었습니다.")
+            
         k_divs_all = scrape_dividend_data(K_CODE, tuple(YEAR_RANGE)) if K_CODE else {}
         t_divs_all = scrape_dividend_data(T_CODE, tuple(YEAR_RANGE)) if T_CODE else {}
 
@@ -278,17 +293,19 @@ if run_btn:
                         history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':K_CODE,'단가':k_d['val'],'수량':k_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':k_d['yield']})
                 
                 if div_option == "재투자" and dt_pay:
-                    found = k_prices_all.index[k_prices_all.index > dt_pay]
-                    if not found.empty and found[0].year == y and found[0].month == m:
-                        dt_re = found[0]
-                        p_re = int(k_prices_all.loc[dt_re])
-                        if cash >= p_re:
-                            add_sh = cash // p_re
-                            if add_sh > 0:
-                                cash -= (add_sh * p_re); k_sh += add_sh
-                                history.append({'연도':y,'월':f"{m}월",'날짜':dt_re.strftime('%y/%m/%d'),'구분':'재투자','종목':K_CODE,'단가':p_re,'수량':add_sh,'거래금액':add_sh*p_re,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_re),'배당률':0.0})
+                    if not k_prices_all.empty:
+                        found = k_prices_all.index[k_prices_all.index > dt_pay]
+                        if not found.empty and found[0].year == y and found[0].month == m:
+                            dt_re = found[0]
+                            p_re = int(k_prices_all.loc[dt_re])
+                            if cash >= p_re:
+                                add_sh = cash // p_re
+                                if add_sh > 0:
+                                    cash -= (add_sh * p_re); k_sh += add_sh
+                                    history.append({'연도':y,'월':f"{m}월",'날짜':dt_re.strftime('%y/%m/%d'),'구분':'재투자','종목':K_CODE,'단가':p_re,'수량':add_sh,'거래금액':add_sh*p_re,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_re),'배당률':0.0})
 
-                k_m_prices = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)]
+                # [핵심] 빈 데이터 객체에서 .year 접근시 AttributeError 원천 차단
+                k_m_prices = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)] if not k_prices_all.empty else k_prices_all
                 if not k_m_prices.empty:
                     last_dt = k_m_prices.index[-1]
                     cur_p = int(k_m_prices.iloc[-1])
@@ -309,14 +326,14 @@ if run_btn:
                             history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':T_CODE,'단가':t_d['val'],'수량':t_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(t_sh*p),'배당률':t_d['yield']})
                     
                     dt_switch = None
-                    if dt_pay:
+                    if dt_pay and not t_prices_all.empty:
                         found = t_prices_all.index[t_prices_all.index > dt_pay]
                         if not found.empty and found[0].year == y and found[0].month == m: dt_switch = found[0]
                     else:
                         dt_s, _ = get_safe_price(t_prices_all, y, m, t_d['reinv_day'] if t_d else 18)
                         dt_switch = dt_s
 
-                    if dt_switch:
+                    if dt_switch and not t_prices_all.empty:
                         p_s = int(t_prices_all.loc[dt_switch])
                         sell_amt = t_sh * p_s; cash += sell_amt
                         history.append({'연도':y,'월':f"{m}월",'날짜':dt_switch.strftime('%y/%m/%d'),'구분':'매도','종목':T_CODE,'단가':p_s,'수량':t_sh,'거래금액':sell_amt,'수령배당금':0,'현금잔고':cash,'총자산':cash,'배당률':0.0}); t_sh = 0
@@ -343,14 +360,14 @@ if run_btn:
                             history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':K_CODE,'단가':k_d['val'],'수량':k_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':k_d['yield']})
                     
                     dt_switch = None
-                    if dt_pay:
+                    if dt_pay and not k_prices_all.empty:
                         found = k_prices_all.index[k_prices_all.index > dt_pay]
                         if not found.empty and found[0].year == y and found[0].month == m: dt_switch = found[0]
                     else:
                         dt_s, _ = get_safe_price(k_prices_all, y, m, k_d['reinv_day'] if k_d else 18)
                         dt_switch = dt_s
 
-                    if dt_switch:
+                    if dt_switch and not k_prices_all.empty:
                         p_s = int(k_prices_all.loc[dt_switch])
                         sell_amt = k_sh * p_s; cash += sell_amt
                         history.append({'연도':y,'월':f"{m}월",'날짜':dt_switch.strftime('%y/%m/%d'),'구분':'매도','종목':K_CODE,'단가':p_s,'수량':k_sh,'거래금액':sell_amt,'수령배당금':0,'현금잔고':cash,'총자산':cash,'배당률':0.0}); k_sh = 0
@@ -360,8 +377,10 @@ if run_btn:
                             t_sh = cash // p_t; cash -= (t_sh*p_t)
                             history.append({'연도':y,'월':f"{m}월",'날짜':dt_switch.strftime('%y/%m/%d'),'구분':'매수','종목':T_CODE,'단가':p_t,'수량':t_sh,'거래금액':t_sh*p_t,'수령배당금':0,'현금잔고':cash,'총자산':cash+(t_sh*p_t),'배당률':0.0})
 
-                k_m_prices = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)]
-                t_m_prices = t_prices_all[(t_prices_all.index.year == y) & (t_prices_all.index.month == m)]
+                # [핵심] 빈 데이터 객체에서 .year 접근시 AttributeError 원천 차단
+                k_m_prices = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)] if not k_prices_all.empty else k_prices_all
+                t_m_prices = t_prices_all[(t_prices_all.index.year == y) & (t_prices_all.index.month == m)] if not t_prices_all.empty else t_prices_all
+                
                 if not k_m_prices.empty or not t_m_prices.empty:
                     cur_ticker = K_CODE if k_sh > 0 else (T_CODE if t_sh > 0 else "-")
                     cur_sh = k_sh if k_sh > 0 else t_sh
