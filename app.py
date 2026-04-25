@@ -86,33 +86,37 @@ def fetch_actual_prices(code, start_date, end_date):
 
 def load_local_dividend_data(code, years_tuple):
     """
-    스트림릿 클라우드용 초고속 데이터 로더
-    - 깃허브에 올라온 연도별 JSON 파일만 읽습니다. (셀레니움 완전히 제거됨)
+    단일 JSON 파일에서 모든 연도 데이터를 한 번에 로드하는 함수
     """
     years = list(years_tuple)
-    div_map = {}
-    missing_years = []
+    file_path = f"dividend_data_{code}.json"
     
-    for y in years:
-        file_path = f"dividend_data_{code}_{y}.json"
+    div_map = {}
+    file_missing = False
+    
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                cached_data = json.load(f)
+        except:
+            cached_data = {}
+    else:
+        cached_data = {}
+        file_missing = True
         
-        if os.path.exists(file_path):
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    cached_data = json.load(f)
-                    div_map[y] = cached_data.get(str(y)) or cached_data.get(y)
-            except:
-                missing_years.append(y)
+    for y in years:
+        str_y = str(y)
+        if str_y in cached_data:
+            div_map[y] = cached_data[str_y]
+        elif y in cached_data:
+            div_map[y] = cached_data[y]
         else:
-            missing_years.append(y)
-            
-    # 깃허브에 파일이 안 올라와 있는 연도는 기본값(Fallback)으로 채웁니다.
-    for y in missing_years:
-        if code == '498400': div_map[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
-        elif code == '472150': div_map[y] = [{'val':250, 'pay_day':2, 'reinv_day':3, 'yield':0.0} for _ in range(12)]
-        else: div_map[y] = [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
+            # 해당 연도 데이터가 없거나 파일이 없는 경우 기본값 처리
+            if code == '498400': div_map[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
+            elif code == '472150': div_map[y] = [{'val':250, 'pay_day':2, 'reinv_day':3, 'yield':0.0} for _ in range(12)]
+            else: div_map[y] = [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
 
-    return div_map, missing_years
+    return div_map, file_missing
 
 def fmt_man(val): return "0" if val == 0 else (f"{int(val) // 10000:,}만" if abs(val) >= 10000 else f"{int(val):,}")
 
@@ -138,7 +142,7 @@ if st.session_state.show_settings:
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
 
     if run_btn:
-        with st.spinner('시뮬레이션 중입니다.'):
+        with st.spinner('시뮬레이션 중입니다...'):
             now = datetime.datetime.now(); curr_year, curr_month = now.year, now.month
             INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input)) if cash_input else 0
             
@@ -168,16 +172,16 @@ if st.session_state.show_settings:
             k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts)
             t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts) if T_CODE else pd.Series(dtype=float, index=pd.to_datetime([]))
             
-            # 💡 연도별 JSON 파일 로드 (가장 가볍고 빠른 방식)
+            # 단일 파일(dividend_data_코드.json) 로드
             k_divs_all, k_missing = load_local_dividend_data(K_CODE, tuple(YEAR_RANGE))
             if T_CODE:
                 t_divs_all, t_missing = load_local_dividend_data(T_CODE, tuple(YEAR_RANGE))
             else:
-                t_divs_all, t_missing = {}, []
+                t_divs_all, t_missing = {}, False
 
-            # 누락된 파일이 있으면 경고 문구 출력
-            if k_missing: st.warning(f"⚠️ [{K_CODE}] {k_missing}년도 데이터 파일이 없어 기본값이 적용되었습니다. 로컬에서 수집 후 깃허브에 올려주세요.")
-            if t_missing: st.warning(f"⚠️ [{T_CODE}] {t_missing}년도 데이터 파일이 없어 기본값이 적용되었습니다. 로컬에서 수집 후 깃허브에 올려주세요.")
+            # 파일이 없으면 경고 출력
+            if k_missing: st.warning(f"⚠️ [{K_CODE}] 통합 데이터 파일(dividend_data_{K_CODE}.json)이 없어 기본값이 적용되었습니다. 깃허브에 업로드해주세요.")
+            if t_missing: st.warning(f"⚠️ [{T_CODE}] 통합 데이터 파일(dividend_data_{T_CODE}.json)이 없어 기본값이 적용되었습니다. 깃허브에 업로드해주세요.")
 
             history, cash, k_sh, t_sh, total_div, first_buy = [], INITIAL_CASH, 0, 0, 0, False
 
