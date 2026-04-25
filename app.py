@@ -11,6 +11,8 @@ import shutil
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 import streamlit as st
 import streamlit.components.v1 as components
@@ -101,10 +103,11 @@ def fetch_actual_prices(code, start_date, end_date):
     return price_series
 
 def scrape_dividend_data(code, years_tuple):
-    """ETFCheck 분배금 데이터 스크래핑 (봇 탐지 우회 적용)"""
+    """ETFCheck 분배금 데이터 스크래핑 (명시적 대기 및 봇 탐지 우회 적용)"""
     years = list(years_tuple)
     file_path = f"dividend_data_{code}.json"
     
+    # 1. 캐시 파일 확인
     if os.path.exists(file_path):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -120,28 +123,35 @@ def scrape_dividend_data(code, years_tuple):
         options.add_argument('--headless=new')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
-        # 모바일 브라우저 위장
         options.add_argument('user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1')
         
         chromedriver_path = shutil.which("chromedriver")
         driver = webdriver.Chrome(service=Service(chromedriver_path if chromedriver_path else ChromeDriverManager().install()), options=options)
         
-        # 웹드라이버 탐지 우회
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
             "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         })
 
         driver.get(f"https://www.etfcheck.co.kr/mobile/etpitem/{code}/cash/hist")
-        time.sleep(5)
-        for _ in range(3): 
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        
+        # 💡 Vue.js 렌더링 완료 대기: 실제 테이블의 td 데이터가 DOM에 나타날 때까지 최대 15초 대기
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "table tbody tr td"))
+            )
+        except Exception as timeout_e:
+            print(f"⚠️ [{code}] 테이블 데이터 로딩 시간 초과: {timeout_e}")
+
+        # 여분의 스크롤 처리 (Lazy loading 대비)
+        for _ in range(2): 
+            driver.execute_script("window.scrollBy(0, window.innerHeight);")
             time.sleep(1)
             
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         rows = soup.find_all('tr')
         
         if not rows:
-            print(f"⚠️ [{code}] 데이터 행을 찾지 못했습니다. 차단되었거나 페이지 구조가 변경되었을 수 있습니다.")
+            print(f"⚠️ [{code}] 데이터 행을 찾지 못했습니다. 접근이 차단되었거나 구조가 다릅니다.")
             
         for row in rows:
             tds = row.find_all('td')
@@ -154,12 +164,14 @@ def scrape_dividend_data(code, years_tuple):
                     p_day, r_day = (2, 3) if ex_date.day > 16 else (17, 18)
                     if pay_dt.year in years: 
                         div_map[pay_dt.year][pay_dt.month-1] = {'val': div_val, 'pay_day': p_day, 'reinv_day': r_day, 'yield': div_yield_val}
-                except: pass
+                except Exception: 
+                    pass
     except Exception as e:
-        print(f"스크래핑 에러: {e}")
+        print(f"스크래핑 전체 에러: {e}")
     finally:
         if driver: driver.quit()
 
+    # Fallback 로직
     for y in years:
         if not any(item['val'] > 0 for item in div_map[y]):
             if code == '498400': div_map[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
