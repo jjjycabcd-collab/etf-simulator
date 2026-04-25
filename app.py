@@ -8,6 +8,7 @@ import time
 import json
 import datetime
 import shutil
+import traceback
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -92,7 +93,10 @@ def fetch_actual_prices(code, start_date, end_date):
     return price_series
 
 def scrape_dividend_data(code, years_tuple):
-    """에러 메시지까지 함께 반환하도록 수정된 스크래핑 함수"""
+    """
+    클라우드 환경(리눅스) 최적화 버전
+    에러 발생 시 파이썬 Exception 전체 로그를 반환하여 화면에 뿌려줍니다.
+    """
     years = list(years_tuple)
     file_path = f"dividend_data_{code}.json"
     
@@ -106,39 +110,44 @@ def scrape_dividend_data(code, years_tuple):
 
     div_map = {y: [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)] for y in years}
     driver = None
-    error_msg = ""
+    debug_log = ""
     
     try:
         options = webdriver.ChromeOptions()
-        # 💡 클라우드 환경에서 충돌을 방지하기 위한 안전한 옵션 세팅
         options.add_argument('--headless') 
         options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-dev-shm-usage') # 리눅스 메모리 부족 방지 (필수)
         options.add_argument('--disable-gpu')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
         
-        # 💡 Streamlit Cloud의 시스템 크롬 드라이버를 최우선으로 찾습니다.
-        chromedriver_path = shutil.which("chromedriver")
-        if chromedriver_path:
-            driver = webdriver.Chrome(service=Service(chromedriver_path), options=options)
-        else:
-            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        # 💡 Streamlit Cloud(Linux) 환경에서 시스템에 설치된 크롬을 강제로 찾아서 연결합니다.
+        system_chrome = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
+        if system_chrome:
+            options.binary_location = system_chrome
             
+        system_driver = shutil.which("chromedriver")
+        if system_driver:
+            service = Service(system_driver)
+        else:
+            service = Service(ChromeDriverManager().install())
+            
+        driver = webdriver.Chrome(service=service, options=options)
+        
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"})
         driver.get(f"https://www.etfcheck.co.kr/mobile/etpitem/{code}/cash/hist")
         
         try:
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.table-box table tbody tr td")))
         except Exception:
-            error_msg = "화면은 열렸으나 테이블 데이터가 비동기로 렌더링되지 않았습니다. (봇 차단 의심)"
+            debug_log += f"[{code}] 테이블 요소를 찾는 데 15초 초과 (봇 차단 또는 로딩 지연)\n"
             
         time.sleep(2)
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         rows = soup.select('div.table-box table tbody tr')
         
-        if not rows and not error_msg:
-            error_msg = "'tr' 태그를 전혀 찾을 수 없습니다. (HTML 구조 변경 또는 캡차 페이지)"
+        if not rows:
+            debug_log += f"[{code}] 파싱할 'tr' 태그가 존재하지 않습니다. 사이트에서 접근을 거부했을 가능성이 높습니다.\n"
             
         for row in rows:
             tds = row.find_all('td')
@@ -153,12 +162,14 @@ def scrape_dividend_data(code, years_tuple):
                 except: pass
                 
     except Exception as e:
-        # 💡 브라우저가 뻗어버리면 이 예외처리로 빠지게 됩니다.
-        error_msg = f"크롬 브라우저 초기화 및 실행 실패: {str(e)}"
+        # 드라이버 초기화 자체가 실패할 경우 로그를 수집합니다.
+        debug_log += f"크롬 드라이버 실행 치명적 오류:\n{traceback.format_exc()}\n"
     finally:
-        if driver: driver.quit()
+        if driver: 
+            try: driver.quit()
+            except: pass
 
-    # Fallback 로직 (데이터를 못 가져왔을 때 기본값)
+    # Fallback 로직 
     for y in years:
         if not any(item['val'] > 0 for item in div_map[y]):
             if code == '498400': div_map[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
@@ -168,15 +179,14 @@ def scrape_dividend_data(code, years_tuple):
         with open(file_path, "w", encoding="utf-8") as f: json.dump(div_map, f, ensure_ascii=False, indent=4)
     except: pass
     
-    # 💡 데이터와 함께 발생한 에러 메시지를 같이 반환합니다.
-    return div_map, error_msg
+    return div_map, debug_log
 
 def fmt_man(val): return "0" if val == 0 else (f"{int(val) // 10000:,}만" if abs(val) >= 10000 else f"{int(val):,}")
 
 # ==========================================
 # UI 영역
 # ==========================================
-st.title("📊 ETF 백테스트")
+st.title("📊 ETF 백테스트 (Cloud Debug Ver.)")
 
 if st.session_state.run_clicked and not st.session_state.show_settings:
     if st.button("⚙️ 시뮬레이션 설정 다시 하기", use_container_width=True):
@@ -195,7 +205,7 @@ if st.session_state.show_settings:
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
 
     if run_btn:
-        with st.spinner('데이터 분석 및 백테스트 중...'):
+        with st.spinner('클라우드 환경에서 브라우저를 띄우고 수집 중입니다... (최대 1분 소요)'):
             now = datetime.datetime.now(); curr_year, curr_month = now.year, now.month
             INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input)) if cash_input else 0
             
@@ -206,8 +216,7 @@ if st.session_state.show_settings:
             try:
                 if '~' in period_input:
                     s_part, e_part = period_input.split('~')
-                    start_year, start_month = parse_date_str(s_part.strip())
-                    end_year, end_month = parse_date_str(e_part.strip(), True)
+                    start_year, start_month = parse_date_str(s_part.strip()); end_year, end_month = parse_date_str(e_part.strip(), True)
                 else:
                     start_year, start_month = parse_date_str(period_input.strip()); end_year, end_month = parse_date_str(period_input.strip(), True)
             except: start_year, start_month, end_year, end_month = 2025, 1, curr_year, curr_month
@@ -226,15 +235,16 @@ if st.session_state.show_settings:
             k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts)
             t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts) if T_CODE else pd.Series(dtype=float, index=pd.to_datetime([]))
             
-            # 💡 수정된 함수 호출부: 에러 메시지를 함께 받아와서 화면에 뿌려줍니다.
+            # 💡 분배금 수집 시도 및 에러 로그 받기
             k_divs_all, k_err = scrape_dividend_data(K_CODE, tuple(YEAR_RANGE))
             if T_CODE:
                 t_divs_all, t_err = scrape_dividend_data(T_CODE, tuple(YEAR_RANGE))
             else:
                 t_divs_all, t_err = {}, ""
 
-            if k_err: st.error(f"🚨 [{K_CODE}] 수집 실패: {k_err}")
-            if t_err: st.error(f"🚨 [{T_CODE}] 수집 실패: {t_err}")
+            # 💡 에러 로그가 존재하면 화면에 띄웁니다!
+            if k_err: st.error(f"🚨 [{K_CODE}] 수집 실패 원인:\n{k_err}")
+            if t_err: st.error(f"🚨 [{T_CODE}] 수집 실패 원인:\n{t_err}")
 
             history, cash, k_sh, t_sh, total_div, first_buy = [], INITIAL_CASH, 0, 0, 0, False
 
@@ -322,9 +332,6 @@ if st.session_state.show_settings:
             }
             st.session_state.run_clicked = True; st.session_state.show_settings = False; st.rerun()
 
-# ==========================================
-# 결과 출력 영역 (Client-Side Rendering)
-# ==========================================
 if st.session_state.run_clicked and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
     st.markdown(st.session_state.display_title)
