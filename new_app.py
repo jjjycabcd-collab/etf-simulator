@@ -334,4 +334,95 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                 }}
                 return Math.floor(num).toLocaleString() + "원";
             }} else {{
-                return "$" +
+                return "$" + num.toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+            }}
+        }}
+
+        function renderTables() {{
+            const targetSum = tSelSum.value;
+            const targetHis = tSelHis.value;
+            const sortSum = document.getElementById('sort-select-summary').value;
+            const sortHis = document.getElementById('sort-select-history').value;
+
+            document.getElementById('stat-cards').innerHTML = compareKeys.map(t => {{
+                if(!allData[t]) return "";
+                const d = allData[t];
+                return `<div class="card" style="border-top-color: ${{getTickerColor(t)}}">
+                    <h3>${{d.name}}</h3>
+                    <p style="color:#dc2626">${{fmtMoney(d.final_asset)}}</p>
+                    <div style="font-size:12px; margin-top:5px; font-weight:600;">
+                        수익: <span style="color:${{d.total_profit >=0 ? '#dc2626':'#2563eb'}}">${{fmtMoney(d.total_profit)}} (${{d.profit_rate.toFixed(2)}}%)</span>
+                    </div>
+                </div>`;
+            }}).join('');
+
+            let sData = [...allData[targetSum].summary];
+            if(sortSum === 'desc') sData.reverse();
+            document.getElementById('summary-tbody').innerHTML = sData.map(s => `
+                <tr>
+                    <td>${{s.기간}}</td>
+                    <td>${{fmtMoney(s.기말단가)}}</td>
+                    <td><b>${{fmtMoney(s.기말자산)}}</b></td>
+                    <td style="color:${{s.증감 >=0 ? '#dc2626':'#2563eb'}}; font-weight:600;">${{fmtMoney(s.증감)}}</td>
+                    <td style="color:${{s.수익률 >=0 ? '#dc2626':'#2563eb'}}; font-weight:600;">${{s.수익률.toFixed(2)}}%</td>
+                </tr>
+            `).join('');
+
+            let hData = [...allData[targetHis].history];
+            if(sortHis === 'desc') hData.reverse();
+            document.getElementById('history-tbody').innerHTML = hData.map(h => `
+                <tr>
+                    <td>${{h.날짜}}</td>
+                    <td><span class="badge ${{h.구분.includes('매수') ? 'buy' : 'eval'}}">${{h.구분}}</span></td>
+                    <td>${{fmtMoney(h.단가)}}</td>
+                    <td>${{h.수량.toLocaleString()}}</td>
+                    <td>${{h.거래금액 > 0 ? fmtMoney(h.거래금액) : '-'}}</td>
+                    <td>${{fmtMoney(h.현금잔고)}}</td>
+                    <td style="font-weight:700;">${{fmtMoney(h.총자산)}}</td>
+                </tr>
+            `).join('');
+        }}
+
+        function getTickerColor(ticker) {{
+            const idx = compareKeys.indexOf(ticker);
+            const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4'];
+            return colors[idx % colors.length];
+        }}
+
+        // 차트 그리기 전 데이터에 환율 적용
+        let chartDatasets = {json.dumps(datasets)};
+        if (displayCurrency === "KRW (원)") {{
+            chartDatasets = chartDatasets.map(ds => {{
+                ds.data = ds.data.map(val => val * exRate);
+                return ds;
+            }});
+        }}
+
+        new Chart(document.getElementById('assetChart'), {{
+            type: 'line',
+            data: {{ labels: labels, datasets: chartDatasets }},
+            options: {{ 
+                responsive: true, 
+                maintainAspectRatio: false,
+                interaction: {{ mode: 'index', intersect: false }},
+                scales: {{ 
+                    y: {{ 
+                        ticks: {{ 
+                            callback: function(value) {{ 
+                                if (displayCurrency === "KRW (원)") {{
+                                    return (value / 10000).toLocaleString() + '만'; 
+                                }} else {{
+                                    return '$' + value.toLocaleString(); 
+                                }}
+                            }} 
+                        }} 
+                    }} 
+                }}
+            }}
+        }});
+
+        renderTables();
+    </script>
+    </body></html>
+    """
+    components.html(html_code, height=2500, scrolling=True)
