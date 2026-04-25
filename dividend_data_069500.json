@@ -1,0 +1,446 @@
+{
+    "2021": [
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 670,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 1.54
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 55,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.13
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 85,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.21
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        }
+    ],
+    "2022": [
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 60,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.16
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 500,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 1.42
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 70,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.22
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 105,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.35
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        }
+    ],
+    "2023": [
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 75,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.23
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 445,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 1.35
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 75,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.22
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 100,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.32
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        }
+    ],
+    "2024": [
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 95,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.28
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 440,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 1.2
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 150,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.39
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 120,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.34
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        }
+    ],
+    "2025": [
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 110,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.33
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 429,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 1.25
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 176,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.4
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 140,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.24
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        }
+    ],
+    "2026": [
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 80,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.11
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        }
+    ]
+}

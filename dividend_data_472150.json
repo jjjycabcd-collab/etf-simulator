@@ -1,0 +1,224 @@
+{
+    "2024": [
+        {
+            "val": 62,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.6
+        },
+        {
+            "val": 62,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.61
+        },
+        {
+            "val": 63,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.59
+        },
+        {
+            "val": 64,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.57
+        },
+        {
+            "val": 64,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.59
+        },
+        {
+            "val": 64,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.58
+        },
+        {
+            "val": 67,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.58
+        },
+        {
+            "val": 67,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.59
+        },
+        {
+            "val": 67,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.61
+        },
+        {
+            "val": 67,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.63
+        },
+        {
+            "val": 67,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.64
+        },
+        {
+            "val": 67,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.67
+        }
+    ],
+    "2025": [
+        {
+            "val": 200,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 2.05
+        },
+        {
+            "val": 70,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.7
+        },
+        {
+            "val": 72,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.69
+        },
+        {
+            "val": 100,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.95
+        },
+        {
+            "val": 73,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.72
+        },
+        {
+            "val": 73,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.69
+        },
+        {
+            "val": 73,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.63
+        },
+        {
+            "val": 238,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 1.98
+        },
+        {
+            "val": 230,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 1.99
+        },
+        {
+            "val": 249,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 2.04
+        },
+        {
+            "val": 273,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 1.98
+        },
+        {
+            "val": 255,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 1.95
+        }
+    ],
+    "2026": [
+        {
+            "val": 270,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 1.99
+        },
+        {
+            "val": 320,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 1.93
+        },
+        {
+            "val": 375,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 1.98
+        },
+        {
+            "val": 350,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 2.05
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        }
+    ]
+}
