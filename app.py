@@ -318,18 +318,23 @@ if st.session_state.show_settings:
 
             df_hist = pd.DataFrame(history)
             monthly_summary, labels, divs, dps_list, assets, prev_asset = [], [], [], [], [], INITIAL_CASH
+            
+            # --- 넘파이(Numpy) 직렬화 에러를 방지하기 위한 강제 형변환 적용 ---
             for y, m in target_ym:
                 m_data = df_hist[(df_hist['연도'] == y) & (df_hist['월'] == f"{m}월")]
                 if m_data.empty: continue
-                m_div, m_final = m_data['수령배당금'].sum(), m_data.iloc[-1]['총자산']
-                m_dps, m_yld = m_data[m_data['구분'] == '배당']['단가'].sum(), m_data[m_data['구분'] == '배당']['배당률'].sum()
-                labels.append(f"{y}.{m}"); divs.append(int(m_div)); dps_list.append(int(m_dps)); assets.append(int(m_final))
-                monthly_summary.append({'기간': f"{y}.{m:02d}", '주당배당금': m_dps, '배당률': m_yld, '배당금': m_div, '총자산': m_final, '증감': m_final - prev_asset})
+                m_div = int(m_data['수령배당금'].sum())
+                m_final = int(m_data.iloc[-1]['총자산'])
+                m_dps = int(m_data[m_data['구분'] == '배당']['단가'].sum())
+                m_yld = float(m_data[m_data['구분'] == '배당']['배당률'].sum())
+                
+                labels.append(f"{y}.{m}"); divs.append(m_div); dps_list.append(m_dps); assets.append(m_final)
+                monthly_summary.append({'기간': f"{y}.{m:02d}", '주당배당금': m_dps, '배당률': m_yld, '배당금': m_div, '총자산': m_final, '증감': int(m_final - prev_asset)})
                 prev_asset = m_final
 
             st.session_state.sim_result_data = {
                 'initial_cash': INITIAL_CASH, 'last_asset': assets[-1] if assets else INITIAL_CASH, 'total_div': total_div,
-                'monthly_summary': monthly_summary, 'df_hist_records': df_hist.to_dict(orient='records'), 
+                'monthly_summary': monthly_summary, 'df_hist': df_hist,
                 'labels': labels, 'divs': divs, 'dps_list': dps_list, 'assets': assets, 'div_option': div_option
             }
             st.session_state.run_clicked = True
@@ -348,9 +353,10 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
     prof_rate = (total_prof / res['initial_cash']) * 100 if res['initial_cash'] else 0
     prof_col = "#dc2626" if total_prof > 0 else "#2563eb"
 
-    # JS로 전달할 JSON 데이터 세팅
-    json_summary = json.dumps(res['monthly_summary'])
-    json_history = json.dumps(res['df_hist_records'])
+    # JS로 전달할 JSON 데이터 세팅 (Pandas의 to_json 활용하여 numpy 에러 완벽 차단)
+    df_sum = pd.DataFrame(res['monthly_summary'])
+    json_summary = df_sum.to_json(orient='records', force_ascii=False) if not df_sum.empty else "[]"
+    json_history = res['df_hist'].to_json(orient='records', force_ascii=False) if not res['df_hist'].empty else "[]"
 
     html_code = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -441,7 +447,6 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         // 월별 요약 렌더링 함수
         function renderSummary(order) {{
             let data = [...summaryData]; 
-            // 원래 데이터는 과거->최신 순서임. 
             if (order === 'desc') data.reverse(); 
             
             const tbody = document.getElementById('summary-tbody');
@@ -461,7 +466,6 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         // 상세 내역 렌더링 함수
         function renderHistory(order) {{
             let data = [...historyData];
-            // 원래 데이터는 과거->최신 순서임.
             if (order === 'desc') data.reverse();
             
             const tbody = document.getElementById('history-tbody');
