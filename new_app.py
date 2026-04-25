@@ -62,10 +62,9 @@ if st.session_state.show_settings:
         st.subheader("⚙️ 시뮬레이션 설정")
         col1, col2 = st.columns(2)
         with col1:
-            cash_input = st.text_input("초기 총 투자금 (달러 $)", "100000")
+            cash_input = st.text_input("초기 총 투자금 ($)", "100000")
             period_input = st.text_input("백테스트 기간 (예: 2023~2024)", "2023~2024")
             
-            # 통화 및 환율 설정 추가
             col_c1, col_c2 = st.columns(2)
             with col_c1:
                 currency_option = st.radio("결과 표시 통화", ["USD ($)", "KRW (원)"], horizontal=True)
@@ -247,25 +246,27 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                 'fill': False
             })
 
-    # 표시할 통화 단위 텍스트 설정
     disp_currency_txt = "($)" if res['currency_option'] == "USD ($)" else "(원)"
 
     html_code = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; color: #334155; }}
-        .card-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 25px; }}
-        .card {{ background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-top: 4px solid #94a3b8; }}
-        .card h3 {{ font-size: 13px; margin: 0 0 8px 0; color: #64748b; font-weight:700; line-height: 1.4; }}
-        .card p {{ font-size: 16px; margin: 0; font-weight:700; }}
+        .card-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; margin-bottom: 25px; }}
+        .card {{ background: white; padding: 18px 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border-top: 4px solid #94a3b8; text-align: left; }}
+        .card h3 {{ font-size: 14px; margin: 0 0 15px 0; color: #1e293b; font-weight:700; line-height: 1.4; word-break: keep-all; }}
+        .card-row {{ display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 8px; color: #64748b; }}
+        .card-row.bold {{ font-weight: 600; color: #334155; }}
+        .card-divider {{ border-top: 1px dashed #cbd5e1; margin: 12px 0; }}
+        .card-total {{ display: flex; justify-content: space-between; font-size: 15px; font-weight: 800; color: #0f172a; align-items: center; }}
         .section-title {{ font-size: 16px; font-weight: 700; margin: 30px 0 12px 0; border-left: 4px solid #3b82f6; padding-left: 8px; }}
         .header-flex {{ display: flex; align-items: center; justify-content: space-between; margin: 25px 0 10px 0; }}
         .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; }}
-        .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 350px; margin-bottom: 20px; }}
-        .table-wrapper {{ overflow-x: auto; background: white; border-radius: 12px; }}
+        .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 380px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }}
+        .table-wrapper {{ overflow-x: auto; background: white; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }}
         table {{ width: 100%; border-collapse: collapse; min-width: 600px; }}
-        th {{ background: #f1f5f9; padding: 12px; font-size: 12px; border-bottom: 2px solid #e2e8f0; }}
-        td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; font-size: 12px; }}
+        th {{ background: #f8fafc; padding: 12px; font-size: 12px; border-bottom: 2px solid #e2e8f0; color: #475569; }}
+        td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; font-size: 13px; color: #334155; }}
         .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; }}
         .buy {{ background: #ef4444; }} .sell {{ background: #3b82f6; }} .eval {{ background: #94a3b8; }}
     </style>
@@ -312,6 +313,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         const labels = {json.dumps(res['labels'])};
         const displayCurrency = "{res['currency_option']}";
         const exRate = {res['exchange_rate']};
+        const initialCash = {res['initial_cash']};
 
         const tSelSum = document.getElementById('ticker-select-summary');
         const tSelHis = document.getElementById('ticker-select-history');
@@ -323,12 +325,11 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             }}
         }});
 
-        // 통화 포맷팅 함수 (달러/원화 자동 분기)
         function fmtMoney(val) {{
             if (val === 0 || val === '0') return displayCurrency === "USD ($)" ? "$0.00" : "0원";
             let num = Number(val);
             if (displayCurrency === "KRW (원)") {{
-                num = num * exRate; // 환율 적용
+                num = num * exRate;
                 if (Math.abs(num) >= 10000) {{
                     return Math.floor(num / 10000).toLocaleString() + "만 원";
                 }}
@@ -347,11 +348,29 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             document.getElementById('stat-cards').innerHTML = compareKeys.map(t => {{
                 if(!allData[t]) return "";
                 const d = allData[t];
+                const profitColor = d.total_profit >= 0 ? '#dc2626' : '#2563eb';
+                const sign = d.total_profit > 0 ? '+' : '';
+                
                 return `<div class="card" style="border-top-color: ${{getTickerColor(t)}}">
                     <h3>${{d.name}}</h3>
-                    <p style="color:#dc2626">${{fmtMoney(d.final_asset)}}</p>
-                    <div style="font-size:12px; margin-top:5px; font-weight:600;">
-                        수익: <span style="color:${{d.total_profit >=0 ? '#dc2626':'#2563eb'}}">${{fmtMoney(d.total_profit)}} (${{d.profit_rate.toFixed(2)}}%)</span>
+                    
+                    <div class="card-row">
+                        <span>초기 투자금</span>
+                        <span class="bold">${{fmtMoney(initialCash)}}</span>
+                    </div>
+                    
+                    <div class="card-row">
+                        <span>수익금</span>
+                        <span style="font-weight: 600; color: ${{profitColor}};">
+                            ${{sign}}${{fmtMoney(d.total_profit)}} (${{d.profit_rate.toFixed(2)}}%)
+                        </span>
+                    </div>
+                    
+                    <div class="card-divider"></div>
+                    
+                    <div class="card-total">
+                        <span>최종 자산</span>
+                        <span style="color: #dc2626; font-size: 18px;">${{fmtMoney(d.final_asset)}}</span>
                     </div>
                 </div>`;
             }}).join('');
@@ -363,7 +382,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                     <td>${{s.기간}}</td>
                     <td>${{fmtMoney(s.기말단가)}}</td>
                     <td><b>${{fmtMoney(s.기말자산)}}</b></td>
-                    <td style="color:${{s.증감 >=0 ? '#dc2626':'#2563eb'}}; font-weight:600;">${{fmtMoney(s.증감)}}</td>
+                    <td style="color:${{s.증감 >=0 ? '#dc2626':'#2563eb'}}; font-weight:600;">${{s.증감 > 0 ? '+' : ''}}${{fmtMoney(s.증감)}}</td>
                     <td style="color:${{s.수익률 >=0 ? '#dc2626':'#2563eb'}}; font-weight:600;">${{s.수익률.toFixed(2)}}%</td>
                 </tr>
             `).join('');
@@ -389,7 +408,6 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             return colors[idx % colors.length];
         }}
 
-        // 차트 그리기 전 데이터에 환율 적용
         let chartDatasets = {json.dumps(datasets)};
         if (displayCurrency === "KRW (원)") {{
             chartDatasets = chartDatasets.map(ds => {{
@@ -405,9 +423,14 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                 responsive: true, 
                 maintainAspectRatio: false,
                 interaction: {{ mode: 'index', intersect: false }},
+                plugins: {{
+                    legend: {{ position: 'top', labels: {{ usePointStyle: true, boxWidth: 8 }} }}
+                }},
                 scales: {{ 
                     y: {{ 
+                        grid: {{ color: '#f1f5f9' }},
                         ticks: {{ 
+                            color: '#64748b',
                             callback: function(value) {{ 
                                 if (displayCurrency === "KRW (원)") {{
                                     return (value / 10000).toLocaleString() + '만'; 
@@ -416,7 +439,8 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                                 }}
                             }} 
                         }} 
-                    }} 
+                    }},
+                    x: {{ grid: {{ display: false }}, ticks: {{ color: '#64748b' }} }}
                 }}
             }}
         }});
