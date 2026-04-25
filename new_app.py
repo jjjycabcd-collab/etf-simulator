@@ -47,9 +47,6 @@ def fetch_prices(code, start_date, end_date):
     except:
         return pd.Series(dtype=float)
 
-def fmt_usd(val):
-    return f"${val:,.2f}"
-
 # ==========================================
 # UI 영역
 # ==========================================
@@ -65,8 +62,16 @@ if st.session_state.show_settings:
         st.subheader("⚙️ 시뮬레이션 설정")
         col1, col2 = st.columns(2)
         with col1:
-            cash_input = st.text_input("초기 총 투자금 ($)", "100000")
+            cash_input = st.text_input("초기 총 투자금 (달러 $)", "100000")
             period_input = st.text_input("백테스트 기간 (예: 2023~2024)", "2023~2024")
+            
+            # 통화 및 환율 설정 추가
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                currency_option = st.radio("결과 표시 통화", ["USD ($)", "KRW (원)"], horizontal=True)
+            with col_c2:
+                exchange_rate = st.number_input("적용 환율 (원/$)", value=1400, step=10)
+
         with col2:
             etf_input = st.text_input("종목 티커 (쉼표 구분)", "QQQ")
             strategy_options = st.multiselect(
@@ -84,7 +89,6 @@ if st.session_state.show_settings:
             except:
                 INITIAL_CASH = 100000.0
             
-            # 기간 파싱
             try:
                 if '~' in period_input:
                     s_str, e_str = period_input.split('~')
@@ -99,11 +103,9 @@ if st.session_state.show_settings:
             tickers = [t.strip().upper() for t in etf_input.replace(',', ' ').split() if t.strip()]
             if not tickers: tickers = ["QQQ"]
 
-            # '거치식' 강제 포함 안전장치
             if "거치식 (일괄 매수)" not in strategy_options:
                 strategy_options.insert(0, "거치식 (일괄 매수)")
 
-            # 단일/다중 종목에 따른 타겟 설정
             targets = []
             if len(tickers) == 1:
                 compare_keys = strategy_options
@@ -119,7 +121,6 @@ if st.session_state.show_settings:
             all_sim_data = {}
             chart_labels = []
             
-            # 핵심 엔진: 종목 및 투자 전략별 분할 매수 시뮬레이터
             for target in targets:
                 t_key = target['key']
                 t_code = target['ticker']
@@ -129,27 +130,23 @@ if st.session_state.show_settings:
                 prices = fetch_prices(t_code, start_dt, end_dt)
                 if prices.empty: continue
                 
-                # 분할 매수 일자(invest_dates) 추출
                 if strat == "거치식 (일괄 매수)":
                     invest_dates = [prices.index[0]]
                 elif strat == "적립식 (매일)":
                     invest_dates = prices.index
                 elif strat == "적립식 (매주)":
-                    # 매주 첫 거래일 추출
                     invest_dates = prices.groupby([prices.index.isocalendar().year, prices.index.isocalendar().week]).head(1).index
                 elif strat == "적립식 (매월)":
-                    # 매월 첫 거래일 추출
                     invest_dates = prices.groupby([prices.index.year, prices.index.month]).head(1).index
                 else:
                     invest_dates = [prices.index[0]]
 
-                # 투자금 균등 분배
                 N_invest = len(invest_dates)
                 installment = INITIAL_CASH / N_invest if N_invest > 0 else 0
                 invest_dates_set = set(invest_dates)
                 
-                reserve_cash = INITIAL_CASH # 투자 대기 자금
-                available_cash = 0.0        # 주식을 살 수 있는 예수금
+                reserve_cash = INITIAL_CASH 
+                available_cash = 0.0        
                 total_shares = 0
                 
                 history = []
@@ -164,7 +161,6 @@ if st.session_state.show_settings:
                     eom_price = float(group.iloc[-1])
                     
                     for date, price in group.items():
-                        # 투자일 당도 시, 대기 자금에서 예수금으로 분배 후 매수
                         if date in invest_dates_set:
                             reserve_cash -= installment
                             available_cash += installment
@@ -180,11 +176,10 @@ if st.session_state.show_settings:
                                     '단가': float(price),
                                     '수량': shares_to_buy,
                                     '거래금액': float(shares_to_buy * price),
-                                    '현금잔고': float(reserve_cash + available_cash), # 대기자금 + 예수금 합산
+                                    '현금잔고': float(reserve_cash + available_cash), 
                                     '총자산': float(reserve_cash + available_cash + (total_shares * price))
                                 })
                     
-                    # 월말 자산 평가
                     current_asset = float(reserve_cash + available_cash + (total_shares * eom_price))
                     
                     label = f"{y}.{m}"
@@ -224,14 +219,16 @@ if st.session_state.show_settings:
                 'initial_cash': INITIAL_CASH,
                 'compare_keys': compare_keys,
                 'labels': chart_labels,
-                'all_data': all_sim_data
+                'all_data': all_sim_data,
+                'currency_option': currency_option,
+                'exchange_rate': exchange_rate
             }
             st.session_state.run_clicked = True
             st.session_state.show_settings = False
             st.rerun()
 
 # ==========================================
-# 결과 출력 영역
+# 결과 출력 영역 (Client-Side Rendering)
 # ==========================================
 if st.session_state.run_clicked and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
@@ -249,6 +246,9 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                 'tension': 0.1,
                 'fill': False
             })
+
+    # 표시할 통화 단위 텍스트 설정
+    disp_currency_txt = "($)" if res['currency_option'] == "USD ($)" else "(원)"
 
     html_code = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -271,7 +271,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
     </style>
     </head><body>
     
-    <div class="section-title">📈 자산 성장 비교 ($)</div>
+    <div class="section-title">📈 자산 성장 비교 {disp_currency_txt}</div>
     <div class="chart-container"><canvas id="assetChart"></canvas></div>
 
     <div class="card-grid" id="stat-cards"></div>
@@ -310,6 +310,8 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         const allData = {json.dumps(res['all_data'])};
         const compareKeys = {json.dumps(res['compare_keys'])};
         const labels = {json.dumps(res['labels'])};
+        const displayCurrency = "{res['currency_option']}";
+        const exRate = {res['exchange_rate']};
 
         const tSelSum = document.getElementById('ticker-select-summary');
         const tSelHis = document.getElementById('ticker-select-history');
@@ -321,74 +323,15 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             }}
         }});
 
-        function fmtUsd(val) {{
-            return "$" + Number(val).toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
-        }}
-
-        function renderTables() {{
-            const targetSum = tSelSum.value;
-            const targetHis = tSelHis.value;
-            const sortSum = document.getElementById('sort-select-summary').value;
-            const sortHis = document.getElementById('sort-select-history').value;
-
-            document.getElementById('stat-cards').innerHTML = compareKeys.map(t => {{
-                if(!allData[t]) return "";
-                const d = allData[t];
-                return `<div class="card" style="border-top-color: ${{getTickerColor(t)}}">
-                    <h3>${{d.name}}</h3>
-                    <p style="color:#dc2626">${{fmtUsd(d.final_asset)}}</p>
-                    <div style="font-size:12px; margin-top:5px; font-weight:600;">
-                        수익: <span style="color:${{d.total_profit >=0 ? '#dc2626':'#2563eb'}}">${{fmtUsd(d.total_profit)}} (${{d.profit_rate.toFixed(2)}}%)</span>
-                    </div>
-                </div>`;
-            }}).join('');
-
-            let sData = [...allData[targetSum].summary];
-            if(sortSum === 'desc') sData.reverse();
-            document.getElementById('summary-tbody').innerHTML = sData.map(s => `
-                <tr>
-                    <td>${{s.기간}}</td>
-                    <td>${{fmtUsd(s.기말단가)}}</td>
-                    <td><b>${{fmtUsd(s.기말자산)}}</b></td>
-                    <td style="color:${{s.증감 >=0 ? '#dc2626':'#2563eb'}}; font-weight:600;">${{fmtUsd(s.증감)}}</td>
-                    <td style="color:${{s.수익률 >=0 ? '#dc2626':'#2563eb'}}; font-weight:600;">${{s.수익률.toFixed(2)}}%</td>
-                </tr>
-            `).join('');
-
-            let hData = [...allData[targetHis].history];
-            if(sortHis === 'desc') hData.reverse();
-            document.getElementById('history-tbody').innerHTML = hData.map(h => `
-                <tr>
-                    <td>${{h.날짜}}</td>
-                    <td><span class="badge ${{h.구분.includes('매수') ? 'buy' : 'eval'}}">${{h.구분}}</span></td>
-                    <td>${{fmtUsd(h.단가)}}</td>
-                    <td>${{h.수량.toLocaleString()}}</td>
-                    <td>${{h.거래금액 > 0 ? fmtUsd(h.거래금액) : '-'}}</td>
-                    <td>${{fmtUsd(h.현금잔고)}}</td>
-                    <td style="font-weight:700;">${{fmtUsd(h.총자산)}}</td>
-                </tr>
-            `).join('');
-        }}
-
-        function getTickerColor(ticker) {{
-            const idx = compareKeys.indexOf(ticker);
-            const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4'];
-            return colors[idx % colors.length];
-        }}
-
-        new Chart(document.getElementById('assetChart'), {{
-            type: 'line',
-            data: {{ labels: labels, datasets: {json.dumps(datasets)} }},
-            options: {{ 
-                responsive: true, 
-                maintainAspectRatio: false,
-                interaction: {{ mode: 'index', intersect: false }},
-                scales: {{ y: {{ ticks: {{ callback: function(value) {{ return '$' + value.toLocaleString(); }} }} }} }}
-            }}
-        }});
-
-        renderTables();
-    </script>
-    </body></html>
-    """
-    components.html(html_code, height=2500, scrolling=True)
+        // 통화 포맷팅 함수 (달러/원화 자동 분기)
+        function fmtMoney(val) {{
+            if (val === 0 || val === '0') return displayCurrency === "USD ($)" ? "$0.00" : "0원";
+            let num = Number(val);
+            if (displayCurrency === "KRW (원)") {{
+                num = num * exRate; // 환율 적용
+                if (Math.abs(num) >= 10000) {{
+                    return Math.floor(num / 10000).toLocaleString() + "만 원";
+                }}
+                return Math.floor(num).toLocaleString() + "원";
+            }} else {{
+                return "$" +
