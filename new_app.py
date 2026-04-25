@@ -41,11 +41,11 @@ def fetch_prices(code, start_date, end_date):
     try:
         ticker = yf.Ticker(code)
         df = ticker.history(start=start_date, end=end_date)
-        if df.empty: return pd.Series()
+        if df.empty: return pd.Series(dtype=float)
         df.index = pd.to_datetime(df.index).tz_localize(None)
         return df['Close']
     except:
-        return pd.Series()
+        return pd.Series(dtype=float)
 
 def fmt_usd(val):
     return f"${val:,.2f}"
@@ -75,7 +75,10 @@ if st.session_state.show_settings:
 
     if run_btn:
         with st.spinner('미국 시장 데이터 분석 중...'):
-            INITIAL_CASH = float(re.sub(r'[^0-9.]', '', cash_input))
+            try:
+                INITIAL_CASH = float(re.sub(r'[^0-9.]', '', cash_input))
+            except:
+                INITIAL_CASH = 100000.0
             
             # 기간 파싱
             try:
@@ -119,7 +122,7 @@ if st.session_state.show_settings:
                     '총자산': INITIAL_CASH
                 })
                 
-                # 월별 요약 및 차트 데이터 생성을 위한 처리
+                # 월별 그룹화
                 monthly_groups = prices.groupby([prices.index.year, prices.index.month])
                 prev_asset = INITIAL_CASH
                 
@@ -127,7 +130,8 @@ if st.session_state.show_settings:
                 
                 for (y, m), group in monthly_groups:
                     eom_dt = group.index[-1]
-                    eom_price = float(group[-1])
+                    # Pandas 안전한 접근을 위해 .iloc[-1] 사용
+                    eom_price = float(group.iloc[-1]) 
                     current_asset = rem_cash + (shares * eom_price)
                     
                     # 차트용 데이터 (월말 기준)
