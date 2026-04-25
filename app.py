@@ -119,7 +119,7 @@ def fmt_man(val): return "0" if val == 0 else (f"{int(val) // 10000:,}만" if ab
 # ==========================================
 # UI 영역
 # ==========================================
-st.title("📊 ETF 백테스트 (Fast-Load 모드)")
+st.title("📊 국내 커버드콜 ETF 백테스트")
 
 if st.session_state.run_clicked and not st.session_state.show_settings:
     if st.button("⚙️ 시뮬레이션 설정 다시 하기", use_container_width=True):
@@ -138,7 +138,7 @@ if st.session_state.show_settings:
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
 
     if run_btn:
-        with st.spinner('로컬 데이터를 기반으로 즉시 시뮬레이션을 돌립니다...'):
+        with st.spinner('시뮬레이션 중입니다.'):
             now = datetime.datetime.now(); curr_year, curr_month = now.year, now.month
             INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input)) if cash_input else 0
             
