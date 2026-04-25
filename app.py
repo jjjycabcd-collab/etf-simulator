@@ -7,14 +7,6 @@ import re
 import time
 import json
 import datetime
-import shutil
-import traceback
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -92,114 +84,42 @@ def fetch_actual_prices(code, start_date, end_date):
     except: pass
     return price_series
 
-def scrape_dividend_data(code, years_tuple):
+def load_local_dividend_data(code, years_tuple):
     """
-    연도별 파일 분리 저장 (Partitioning) 및 현재 연도 재수집 로직
-    - 과거 연도(2025 이하) & 파일 존재 -> 캐시 사용
-    - 현재 연도(2026) 또는 과거인데 파일 없음 -> 크롤링 시도 (실패 시 Fallback 적용 후 저장)
+    스트림릿 클라우드용 초고속 데이터 로더
+    - 깃허브에 올라온 연도별 JSON 파일만 읽습니다. (셀레니움 완전히 제거됨)
     """
     years = list(years_tuple)
-    now_year = datetime.datetime.now().year
-    
     div_map = {}
-    years_to_scrape = []
+    missing_years = []
     
-    # 1. 연도별로 캐시 히트 여부 검사
     for y in years:
         file_path = f"dividend_data_{code}_{y}.json"
         
-        if y < now_year and os.path.exists(file_path):
+        if os.path.exists(file_path):
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     cached_data = json.load(f)
-                    # JSON 키는 무조건 문자열 처리되므로 str(y)로 꺼내옵니다.
                     div_map[y] = cached_data.get(str(y)) or cached_data.get(y)
             except:
-                years_to_scrape.append(y) # 파일 깨짐 방지
+                missing_years.append(y)
         else:
-            # 현재 연도거나 캐시 파일이 없으면 새로 긁어야 함
-            years_to_scrape.append(y)
+            missing_years.append(y)
+            
+    # 깃허브에 파일이 안 올라와 있는 연도는 기본값(Fallback)으로 채웁니다.
+    for y in missing_years:
+        if code == '498400': div_map[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
+        elif code == '472150': div_map[y] = [{'val':250, 'pay_day':2, 'reinv_day':3, 'yield':0.0} for _ in range(12)]
+        else: div_map[y] = [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
 
-    error_msg = ""
-    
-    # 2. 스크래핑이 필요한 경우에만 Selenium 기동
-    if years_to_scrape:
-        scraped_data = {y: [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)] for y in years_to_scrape}
-        driver = None
-        
-        try:
-            options = webdriver.ChromeOptions()
-            options.add_argument('--headless') 
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-gpu')
-            options.add_argument('--window-size=1920,1080')
-            options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
-            
-            system_chrome = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
-            if system_chrome: options.binary_location = system_chrome
-                
-            system_driver = shutil.which("chromedriver")
-            service = Service(system_driver) if system_driver else Service(ChromeDriverManager().install())
-                
-            driver = webdriver.Chrome(service=service, options=options)
-            
-            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"})
-            driver.get(f"https://www.etfcheck.co.kr/mobile/etpitem/{code}/cash/hist")
-            
-            try:
-                WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.table-box table tbody tr td")))
-            except Exception:
-                error_msg += f"[{code}] 테이블 로딩 15초 초과 (클라우드 IP 차단 의심)\n"
-                
-            time.sleep(2)
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            rows = soup.select('div.table-box table tbody tr')
-            
-            for row in rows:
-                tds = row.find_all('td')
-                if len(tds) >= 2:
-                    try:
-                        ex_date = pd.to_datetime(tds[0].text.strip())
-                        div_val = int(re.sub(r'[^0-9]', '', tds[1].text.strip()))
-                        div_yield_val = float(re.sub(r'[^0-9.]', '', tds[2].text.strip())) if len(tds) >= 3 else 0.0
-                        pay_dt = ex_date + pd.DateOffset(months=1) if ex_date.day > 16 else ex_date
-                        p_day, r_day = (2, 3) if ex_date.day > 16 else (17, 18)
-                        
-                        # 대상 연도 데이터만 수집
-                        if pay_dt.year in years_to_scrape: 
-                            scraped_data[pay_dt.year][pay_dt.month-1] = {'val': div_val, 'pay_day': p_day, 'reinv_day': r_day, 'yield': div_yield_val}
-                    except: pass
-                    
-        except Exception as e:
-            error_msg += f"[{code}] 크롤링 치명적 오류:\n{traceback.format_exc()}\n"
-        finally:
-            if driver: 
-                try: driver.quit()
-                except: pass
-
-        # 3. 크롤링 완료 후 연도별 파일 생성 (데이터가 비어있으면 Fallback 세팅)
-        for y in years_to_scrape:
-            if not any(item['val'] > 0 for item in scraped_data[y]):
-                if code == '498400': scraped_data[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
-                elif code == '472150': scraped_data[y] = [{'val':250, 'pay_day':2, 'reinv_day':3, 'yield':0.0} for _ in range(12)]
-            
-            div_map[y] = scraped_data[y]
-            file_path = f"dividend_data_{code}_{y}.json"
-            
-            try:
-                with open(file_path, "w", encoding="utf-8") as f: 
-                    json.dump({str(y): scraped_data[y]}, f, ensure_ascii=False, indent=4)
-            except: pass
-
-    return div_map, error_msg
+    return div_map, missing_years
 
 def fmt_man(val): return "0" if val == 0 else (f"{int(val) // 10000:,}만" if abs(val) >= 10000 else f"{int(val):,}")
 
 # ==========================================
 # UI 영역
 # ==========================================
-st.title("📊 ETF 백테스트 (연도별 캐시 모드)")
+st.title("📊 ETF 백테스트 (Fast-Load 모드)")
 
 if st.session_state.run_clicked and not st.session_state.show_settings:
     if st.button("⚙️ 시뮬레이션 설정 다시 하기", use_container_width=True):
@@ -218,7 +138,7 @@ if st.session_state.show_settings:
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
 
     if run_btn:
-        with st.spinner('데이터 준비 및 백테스트 실행 중...'):
+        with st.spinner('로컬 데이터를 기반으로 즉시 시뮬레이션을 돌립니다...'):
             now = datetime.datetime.now(); curr_year, curr_month = now.year, now.month
             INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input)) if cash_input else 0
             
@@ -248,14 +168,16 @@ if st.session_state.show_settings:
             k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts)
             t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts) if T_CODE else pd.Series(dtype=float, index=pd.to_datetime([]))
             
-            k_divs_all, k_err = scrape_dividend_data(K_CODE, tuple(YEAR_RANGE))
+            # 💡 연도별 JSON 파일 로드 (가장 가볍고 빠른 방식)
+            k_divs_all, k_missing = load_local_dividend_data(K_CODE, tuple(YEAR_RANGE))
             if T_CODE:
-                t_divs_all, t_err = scrape_dividend_data(T_CODE, tuple(YEAR_RANGE))
+                t_divs_all, t_missing = load_local_dividend_data(T_CODE, tuple(YEAR_RANGE))
             else:
-                t_divs_all, t_err = {}, ""
+                t_divs_all, t_missing = {}, []
 
-            if k_err: st.warning(f"⚠️ [{K_CODE}] 최신 연도 수집 실패로 기본값(Fallback)이 적용되었습니다.\n{k_err}")
-            if t_err: st.warning(f"⚠️ [{T_CODE}] 최신 연도 수집 실패로 기본값(Fallback)이 적용되었습니다.\n{t_err}")
+            # 누락된 파일이 있으면 경고 문구 출력
+            if k_missing: st.warning(f"⚠️ [{K_CODE}] {k_missing}년도 데이터 파일이 없어 기본값이 적용되었습니다. 로컬에서 수집 후 깃허브에 올려주세요.")
+            if t_missing: st.warning(f"⚠️ [{T_CODE}] {t_missing}년도 데이터 파일이 없어 기본값이 적용되었습니다. 로컬에서 수집 후 깃허브에 올려주세요.")
 
             history, cash, k_sh, t_sh, total_div, first_buy = [], INITIAL_CASH, 0, 0, 0, False
 
