@@ -101,26 +101,49 @@ def fetch_actual_prices(code, start_date, end_date):
     return price_series
 
 def scrape_dividend_data(code, years_tuple):
+    """ETFCheck 분배금 데이터 스크래핑 (봇 탐지 우회 적용)"""
     years = list(years_tuple)
     file_path = f"dividend_data_{code}.json"
+    
     if os.path.exists(file_path):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                cached_data = json.load(f); parsed_cache = {int(k): v for k, v in cached_data.items()}
+                cached_data = json.load(f)
+                parsed_cache = {int(k): v for k, v in cached_data.items()}
                 if all(y in parsed_cache for y in years): return parsed_cache
         except: pass
+
     div_map = {y: [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)] for y in years}
     driver = None
     try:
         options = webdriver.ChromeOptions()
-        options.add_argument('--headless=new'); options.add_argument('--no-sandbox')
+        options.add_argument('--headless=new')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        # 모바일 브라우저 위장
+        options.add_argument('user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1')
+        
         chromedriver_path = shutil.which("chromedriver")
         driver = webdriver.Chrome(service=Service(chromedriver_path if chromedriver_path else ChromeDriverManager().install()), options=options)
+        
+        # 웹드라이버 탐지 우회
+        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+            "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        })
+
         driver.get(f"https://www.etfcheck.co.kr/mobile/etpitem/{code}/cash/hist")
         time.sleep(5)
-        for _ in range(3): driver.execute_script("window.scrollTo(0, document.body.scrollHeight);"); time.sleep(1)
+        for _ in range(3): 
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(1)
+            
         soup = BeautifulSoup(driver.page_source, 'html.parser')
-        for row in soup.find_all('tr'):
+        rows = soup.find_all('tr')
+        
+        if not rows:
+            print(f"⚠️ [{code}] 데이터 행을 찾지 못했습니다. 차단되었거나 페이지 구조가 변경되었을 수 있습니다.")
+            
+        for row in rows:
             tds = row.find_all('td')
             if len(tds) >= 2:
                 try:
@@ -129,18 +152,24 @@ def scrape_dividend_data(code, years_tuple):
                     div_yield_val = float(re.sub(r'[^0-9.]', '', tds[2].text.strip())) if len(tds) >= 3 else 0.0
                     pay_dt = ex_date + pd.DateOffset(months=1) if ex_date.day > 16 else ex_date
                     p_day, r_day = (2, 3) if ex_date.day > 16 else (17, 18)
-                    if pay_dt.year in years: div_map[pay_dt.year][pay_dt.month-1] = {'val': div_val, 'pay_day': p_day, 'reinv_day': r_day, 'yield': div_yield_val}
+                    if pay_dt.year in years: 
+                        div_map[pay_dt.year][pay_dt.month-1] = {'val': div_val, 'pay_day': p_day, 'reinv_day': r_day, 'yield': div_yield_val}
                 except: pass
-    except: pass
+    except Exception as e:
+        print(f"스크래핑 에러: {e}")
     finally:
         if driver: driver.quit()
+
     for y in years:
         if not any(item['val'] > 0 for item in div_map[y]):
             if code == '498400': div_map[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
             elif code == '472150': div_map[y] = [{'val':250, 'pay_day':2, 'reinv_day':3, 'yield':0.0} for _ in range(12)]
+            
     try:
-        with open(file_path, "w", encoding="utf-8") as f: json.dump(div_map, f, ensure_ascii=False, indent=4)
+        with open(file_path, "w", encoding="utf-8") as f: 
+            json.dump(div_map, f, ensure_ascii=False, indent=4)
     except: pass
+    
     return div_map
 
 def fmt_man(val):
@@ -330,7 +359,6 @@ if st.session_state.show_settings:
                 monthly_summary.append({'기간': f"{y}.{m:02d}", '주당배당금': m_dps, '배당률': m_yld, '배당금': m_div, '총자산': m_final, '증감': int(m_final - prev_asset)})
                 prev_asset = m_final
 
-            # --- 핵심 변경점: 세션 메모리에 Dataframe을 직접 넣지 않고, 안전하게 JSON 텍스트로 바로 변환해서 넣습니다. ---
             df_sum = pd.DataFrame(monthly_summary)
             json_summary_str = df_sum.to_json(orient='records', force_ascii=False) if not df_sum.empty else "[]"
             json_history_str = df_hist.to_json(orient='records', force_ascii=False) if not df_hist.empty else "[]"
@@ -358,7 +386,6 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
     prof_rate = (total_prof / res['initial_cash']) * 100 if res['initial_cash'] else 0
     prof_col = "#dc2626" if total_prof > 0 else "#2563eb"
 
-    # 세션에서 이미 변환된 JSON 문자열을 바로 가져옵니다.
     json_summary = res.get('json_summary', "[]")
     json_history = res.get('json_history', "[]")
 
