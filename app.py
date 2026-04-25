@@ -221,57 +221,127 @@ if st.session_state.show_settings:
                 if not found.empty and found[0].year == y and found[0].month == m: return (found[0], int(ps.loc[found[0]]))
                 return (None, None)
 
-            # 시뮬레이션 반복문 (기존 로직 유지)
+            # --- 시뮬레이션 반복문 (오류 해결 및 들여쓰기 확장) ---
             for y, m in target_ym:
-                k_d, t_d = k_divs_all.get(y, [None]*12)[m-1], t_divs_all.get(y, [None]*12)[m-1] if T_CODE else None
-                if not T_CODE: # 단일
+                k_d = k_divs_all.get(y, [None]*12)[m-1] if K_CODE else None
+                t_d = t_divs_all.get(y, [None]*12)[m-1] if T_CODE else None
+                
+                if not T_CODE and K_CODE:
+                    # 단일 종목 모드
                     if not first_buy:
                         dt, p = get_safe_price(k_prices_all, y, m, 1)
-                        if dt: k_sh = cash // p; cash -= (k_sh*p); first_buy = True; history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p,'수량':k_sh,'거래금액':k_sh*p,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':0.0})
+                        if dt: 
+                            k_sh = cash // p
+                            cash -= (k_sh * p)
+                            first_buy = True
+                            history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p,'수량':k_sh,'거래금액':k_sh*p,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':0.0})
+                    
                     dt_pay = None
                     if k_sh > 0 and k_d and k_d['val'] > 0:
                         dt, p = get_safe_price(k_prices_all, y, m, k_d['pay_day'])
-                        if dt: dt_pay = dt; dv = k_sh * k_d['val']; total_div += dv; if div_option == "재투자": cash += dv
-                        if dt: history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':K_CODE,'단가':k_d['val'],'수량':k_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':k_d['yield']})
+                        if dt: 
+                            dt_pay = dt
+                            dv = k_sh * k_d['val']
+                            total_div += dv
+                            if div_option == "재투자": 
+                                cash += dv
+                            history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':K_CODE,'단가':k_d['val'],'수량':k_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':k_d['yield']})
+                    
                     if div_option == "재투자" and dt_pay:
                         found = k_prices_all.index[k_prices_all.index > dt_pay]
                         if not found.empty and found[0].year == y and found[0].month == m:
-                            dt_re, p_re = found[0], int(k_prices_all.loc[found[0]])
-                            if cash >= p_re: add_sh = cash // p_re; cash -= (add_sh * p_re); k_sh += add_sh; history.append({'연도':y,'월':f"{m}월",'날짜':dt_re.strftime('%y/%m/%d'),'구분':'재투자','종목':K_CODE,'단가':p_re,'수량':add_sh,'거래금액':add_sh*p_re,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_re),'배당률':0.0})
+                            dt_re = found[0]
+                            p_re = int(k_prices_all.loc[found[0]])
+                            if cash >= p_re: 
+                                add_sh = cash // p_re
+                                cash -= (add_sh * p_re)
+                                k_sh += add_sh
+                                history.append({'연도':y,'월':f"{m}월",'날짜':dt_re.strftime('%y/%m/%d'),'구분':'재투자','종목':K_CODE,'단가':p_re,'수량':add_sh,'거래금액':add_sh*p_re,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_re),'배당률':0.0})
+                    
                     k_m_prices = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)]
-                    if not k_m_prices.empty: history.append({'연도':y,'월':f"{m}월",'날짜':k_m_prices.index[-1].strftime('%y/%m/%d'),'구분':'평가','종목':K_CODE,'단가':int(k_m_prices.iloc[-1]),'수량':k_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*int(k_m_prices.iloc[-1])),'배당률':0.0})
-                else: # 교체매매
+                    if not k_m_prices.empty: 
+                        history.append({'연도':y,'월':f"{m}월",'날짜':k_m_prices.index[-1].strftime('%y/%m/%d'),'구분':'평가','종목':K_CODE,'단가':int(k_m_prices.iloc[-1]),'수량':k_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*int(k_m_prices.iloc[-1])),'배당률':0.0})
+                
+                elif T_CODE and K_CODE:
+                    # 교체 매매 (스윙) 모드
                     if t_sh > 0:
                         dt_pay = None
                         if t_d and t_d['val'] > 0:
                             dt, p = get_safe_price(t_prices_all, y, m, t_d['pay_day'])
-                            if dt: dt_pay = dt; dv = t_sh * t_d['val']; total_div += dv; if div_option == "재투자": cash += dv
-                            if dt: history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':T_CODE,'단가':t_d['val'],'수량':t_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(t_sh*p),'배당률':t_d['yield']})
+                            if dt: 
+                                dt_pay = dt
+                                dv = t_sh * t_d['val']
+                                total_div += dv
+                                if div_option == "재투자": 
+                                    cash += dv
+                                history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':T_CODE,'단가':t_d['val'],'수량':t_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(t_sh*p),'배당률':t_d['yield']})
+                        
                         dt_sw = None
-                        if dt_pay: found = t_prices_all.index[t_prices_all.index > dt_pay]; dt_sw = found[0] if not found.empty and found[0].year == y and found[0].month == m else None
-                        else: dt_sw, _ = get_safe_price(t_prices_all, y, m, t_d['reinv_day'] if t_d else 18)
+                        if dt_pay: 
+                            found = t_prices_all.index[t_prices_all.index > dt_pay]
+                            dt_sw = found[0] if not found.empty and found[0].year == y and found[0].month == m else None
+                        else: 
+                            dt_sw, _ = get_safe_price(t_prices_all, y, m, t_d['reinv_day'] if t_d else 18)
+                        
                         if dt_sw:
-                            p_s, sell_amt = int(t_prices_all.loc[dt_sw]), t_sh * int(t_prices_all.loc[dt_sw]); cash += sell_amt; history.append({'연도':y,'월':f"{m}월",'날짜':dt_sw.strftime('%y/%m/%d'),'구분':'매도','종목':T_CODE,'단가':p_s,'수량':t_sh,'거래금액':sell_amt,'수령배당금':0,'현금잔고':cash,'총자산':cash,'배당률':0.0}); t_sh = 0
-                            if dt_sw in k_prices_all.index: p_k = int(k_prices_all.loc[dt_sw]); k_sh = cash // p_k; cash -= (k_sh*p_k); history.append({'연도':y,'월':f"{m}월",'날짜':dt_sw.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p_k,'수량':k_sh,'거래금액':k_sh*p_k,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_k),'배당률':0.0})
+                            p_s = int(t_prices_all.loc[dt_sw])
+                            sell_amt = t_sh * p_s
+                            cash += sell_amt
+                            history.append({'연도':y,'월':f"{m}월",'날짜':dt_sw.strftime('%y/%m/%d'),'구분':'매도','종목':T_CODE,'단가':p_s,'수량':t_sh,'거래금액':sell_amt,'수령배당금':0,'현금잔고':cash,'총자산':cash,'배당률':0.0})
+                            t_sh = 0
+                            if dt_sw in k_prices_all.index: 
+                                p_k = int(k_prices_all.loc[dt_sw])
+                                k_sh = cash // p_k
+                                cash -= (k_sh * p_k)
+                                history.append({'연도':y,'월':f"{m}월",'날짜':dt_sw.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p_k,'수량':k_sh,'거래금액':k_sh*p_k,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p_k),'배당률':0.0})
+                    
                     if not first_buy:
                         dt, p = get_safe_price(k_prices_all, y, m, 1)
-                        if dt: k_sh = cash // p; cash -= (k_sh*p); first_buy = True; history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p,'수량':k_sh,'거래금액':k_sh*p,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':0.0})
+                        if dt: 
+                            k_sh = cash // p
+                            cash -= (k_sh * p)
+                            first_buy = True
+                            history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'매수','종목':K_CODE,'단가':p,'수량':k_sh,'거래금액':k_sh*p,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':0.0})
+                    
                     if k_sh > 0:
                         dt_pay = None
                         if k_d and k_d['val'] > 0:
                             dt, p = get_safe_price(k_prices_all, y, m, k_d['pay_day'])
-                            if dt: dt_pay = dt; dv = k_sh * k_d['val']; total_div += dv; if div_option == "재투자": cash += dv
-                            if dt: history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':K_CODE,'단가':k_d['val'],'수량':k_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':k_d['yield']})
+                            if dt: 
+                                dt_pay = dt
+                                dv = k_sh * k_d['val']
+                                total_div += dv
+                                if div_option == "재투자": 
+                                    cash += dv
+                                history.append({'연도':y,'월':f"{m}월",'날짜':dt.strftime('%y/%m/%d'),'구분':'배당','종목':K_CODE,'단가':k_d['val'],'수량':k_sh,'거래금액':0,'수령배당금':dv,'현금잔고':cash,'총자산':cash+(k_sh*p),'배당률':k_d['yield']})
+                        
                         dt_sw = None
-                        if dt_pay: found = k_prices_all.index[k_prices_all.index > dt_pay]; dt_sw = found[0] if not found.empty and found[0].year == y and found[0].month == m else None
-                        else: dt_sw, _ = get_safe_price(k_prices_all, y, m, k_d['reinv_day'] if k_d else 18)
+                        if dt_pay: 
+                            found = k_prices_all.index[k_prices_all.index > dt_pay]
+                            dt_sw = found[0] if not found.empty and found[0].year == y and found[0].month == m else None
+                        else: 
+                            dt_sw, _ = get_safe_price(k_prices_all, y, m, k_d['reinv_day'] if k_d else 18)
+                        
                         if dt_sw:
-                            p_s, sell_amt = int(k_prices_all.loc[dt_sw]), k_sh * int(k_prices_all.loc[dt_sw]); cash += sell_amt; history.append({'연도':y,'월':f"{m}월",'날짜':dt_sw.strftime('%y/%m/%d'),'구분':'매도','종목':K_CODE,'단가':p_s,'수량':k_sh,'거래금액':sell_amt,'수령배당금':0,'현금잔고':cash,'총자산':cash,'배당률':0.0}); k_sh = 0
-                            if dt_sw in t_prices_all.index: p_t = int(t_prices_all.loc[dt_sw]); t_sh = cash // p_t; cash -= (t_sh*p_t); history.append({'연도':y,'월':f"{m}월",'날짜':dt_sw.strftime('%y/%m/%d'),'구분':'매수','종목':T_CODE,'단가':p_t,'수량':t_sh,'거래금액':t_sh*p_t,'수령배당금':0,'현금잔고':cash,'총자산':cash+(t_sh*p_t),'배당률':0.0})
+                            p_s = int(k_prices_all.loc[dt_sw])
+                            sell_amt = k_sh * p_s
+                            cash += sell_amt
+                            history.append({'연도':y,'월':f"{m}월",'날짜':dt_sw.strftime('%y/%m/%d'),'구분':'매도','종목':K_CODE,'단가':p_s,'수량':k_sh,'거래금액':sell_amt,'수령배당금':0,'현금잔고':cash,'총자산':cash,'배당률':0.0})
+                            k_sh = 0
+                            if dt_sw in t_prices_all.index: 
+                                p_t = int(t_prices_all.loc[dt_sw])
+                                t_sh = cash // p_t
+                                cash -= (t_sh * p_t)
+                                history.append({'연도':y,'월':f"{m}월",'날짜':dt_sw.strftime('%y/%m/%d'),'구분':'매수','종목':T_CODE,'단가':p_t,'수량':t_sh,'거래금액':t_sh*p_t,'수령배당금':0,'현금잔고':cash,'총자산':cash+(t_sh*p_t),'배당률':0.0})
+                    
                     km, tm = k_prices_all[(k_prices_all.index.year == y) & (k_prices_all.index.month == m)], t_prices_all[(t_prices_all.index.year == y) & (t_prices_all.index.month == m)]
                     if not km.empty or not tm.empty:
-                        cur_t, cur_s, cur_p = (K_CODE, k_sh, int(km.iloc[-1])) if k_sh > 0 and not km.empty else (T_CODE, t_sh, int(tm.iloc[-1]) if not tm.empty else 0)
-                        history.append({'연도':y,'월':f"{m}월",'날짜':km.index[-1].strftime('%y/%m/%d') if not km.empty else tm.index[-1].strftime('%y/%m/%d'),'구분':'평가','종목':cur_t,'단가':cur_p,'수량':cur_s,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*int(km.iloc[-1]) if not km.empty else 0)+(t_sh*int(tm.iloc[-1]) if not tm.empty else 0),'배당률':0.0})
+                        cur_t = K_CODE if k_sh > 0 else (T_CODE if t_sh > 0 else "-")
+                        cur_s = k_sh if k_sh > 0 else t_sh
+                        cur_p = int(km.iloc[-1]) if k_sh > 0 and not km.empty else (int(tm.iloc[-1]) if t_sh > 0 and not tm.empty else 0)
+                        last_dt = km.index[-1].strftime('%y/%m/%d') if not km.empty else tm.index[-1].strftime('%y/%m/%d')
+                        val_total = (k_sh*int(km.iloc[-1]) if not km.empty else 0) + (t_sh*int(tm.iloc[-1]) if not tm.empty else 0)
+                        history.append({'연도':y,'월':f"{m}월",'날짜':last_dt,'구분':'평가','종목':cur_t,'단가':cur_p,'수량':cur_s,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+val_total,'배당률':0.0})
 
             df_hist = pd.DataFrame(history)
             monthly_summary, labels, divs, dps_list, assets, prev_asset = [], [], [], [], [], INITIAL_CASH
