@@ -77,7 +77,7 @@ def fetch_actual_prices(code, start_date, end_date):
                 if len(tds) >= 7:
                     dt_td, pr_td = tds[0].find('span', class_='tah'), tds[1].find('span', class_='tah')
                     if dt_td and pr_td:
-                        date_str, price_str = dt_td.text.strip(), pr_td.text.strip().replace(',', '')
+                        date_str, price_str = dt_td.text.strip(), pr_td.text.replace(',', '')
                         if date_str and price_str.isdigit():
                             dt = pd.to_datetime(date_str.replace('.', '-'))
                             all_prices[dt] = int(price_str)
@@ -93,20 +93,13 @@ def fetch_actual_prices(code, start_date, end_date):
     return price_series
 
 def scrape_dividend_data(code, years_tuple):
-    """
-    클라우드 환경(리눅스) 최적화 버전
-    에러 발생 시 파이썬 Exception 전체 로그를 반환하여 화면에 뿌려줍니다.
-    """
+    """캐시 무시 및 강제 크롤링 / 오류 디버깅 100% 모드"""
     years = list(years_tuple)
     file_path = f"dividend_data_{code}.json"
     
+    # 💡 [원인 해결] 예전에 만들어진 쓰레기(기본값) 캐시 파일이 있으면 쿨하게 무시하거나 삭제합니다!
     if os.path.exists(file_path):
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                cached_data = json.load(f)
-                parsed_cache = {int(k): v for k, v in cached_data.items()}
-                if all(y in parsed_cache for y in years): return parsed_cache, ""
-        except: pass
+        os.remove(file_path)
 
     div_map = {y: [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)] for y in years}
     driver = None
@@ -116,21 +109,16 @@ def scrape_dividend_data(code, years_tuple):
         options = webdriver.ChromeOptions()
         options.add_argument('--headless') 
         options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage') # 리눅스 메모리 부족 방지 (필수)
+        options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
         
-        # 💡 Streamlit Cloud(Linux) 환경에서 시스템에 설치된 크롬을 강제로 찾아서 연결합니다.
         system_chrome = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
-        if system_chrome:
-            options.binary_location = system_chrome
+        if system_chrome: options.binary_location = system_chrome
             
         system_driver = shutil.which("chromedriver")
-        if system_driver:
-            service = Service(system_driver)
-        else:
-            service = Service(ChromeDriverManager().install())
+        service = Service(system_driver) if system_driver else Service(ChromeDriverManager().install())
             
         driver = webdriver.Chrome(service=service, options=options)
         
@@ -140,14 +128,14 @@ def scrape_dividend_data(code, years_tuple):
         try:
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.table-box table tbody tr td")))
         except Exception:
-            debug_log += f"[{code}] 테이블 요소를 찾는 데 15초 초과 (봇 차단 또는 로딩 지연)\n"
+            debug_log += f"[{code}] 테이블 요소를 찾는 데 15초 초과! (페이지 소스 일부: {driver.page_source[:300]})\n"
             
         time.sleep(2)
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         rows = soup.select('div.table-box table tbody tr')
         
         if not rows:
-            debug_log += f"[{code}] 파싱할 'tr' 태그가 존재하지 않습니다. 사이트에서 접근을 거부했을 가능성이 높습니다.\n"
+            debug_log += f"[{code}] 파싱할 'tr' 태그가 존재하지 않습니다. 화면 로딩 실패 또는 접근 거부.\n"
             
         for row in rows:
             tds = row.find_all('td')
@@ -162,14 +150,13 @@ def scrape_dividend_data(code, years_tuple):
                 except: pass
                 
     except Exception as e:
-        # 드라이버 초기화 자체가 실패할 경우 로그를 수집합니다.
         debug_log += f"크롬 드라이버 실행 치명적 오류:\n{traceback.format_exc()}\n"
     finally:
         if driver: 
             try: driver.quit()
             except: pass
 
-    # Fallback 로직 
+    # Fallback 로직 (데이터를 끝내 못 가져왔을 때 기본값)
     for y in years:
         if not any(item['val'] > 0 for item in div_map[y]):
             if code == '498400': div_map[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
@@ -186,7 +173,7 @@ def fmt_man(val): return "0" if val == 0 else (f"{int(val) // 10000:,}만" if ab
 # ==========================================
 # UI 영역
 # ==========================================
-st.title("📊 ETF 백테스트 (Cloud Debug Ver.)")
+st.title("📊 ETF 백테스트 (캐시 무시 모드)")
 
 if st.session_state.run_clicked and not st.session_state.show_settings:
     if st.button("⚙️ 시뮬레이션 설정 다시 하기", use_container_width=True):
@@ -205,7 +192,7 @@ if st.session_state.show_settings:
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
 
     if run_btn:
-        with st.spinner('클라우드 환경에서 브라우저를 띄우고 수집 중입니다... (최대 1분 소요)'):
+        with st.spinner('캐시 무시하고 브라우저 강제 실행 중... (시간이 걸릴 수 있습니다)'):
             now = datetime.datetime.now(); curr_year, curr_month = now.year, now.month
             INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input)) if cash_input else 0
             
@@ -235,16 +222,16 @@ if st.session_state.show_settings:
             k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts)
             t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts) if T_CODE else pd.Series(dtype=float, index=pd.to_datetime([]))
             
-            # 💡 분배금 수집 시도 및 에러 로그 받기
+            # 💡 수정된 수집 함수 (무조건 크롤링 및 로그 반환)
             k_divs_all, k_err = scrape_dividend_data(K_CODE, tuple(YEAR_RANGE))
             if T_CODE:
                 t_divs_all, t_err = scrape_dividend_data(T_CODE, tuple(YEAR_RANGE))
             else:
                 t_divs_all, t_err = {}, ""
 
-            # 💡 에러 로그가 존재하면 화면에 띄웁니다!
-            if k_err: st.error(f"🚨 [{K_CODE}] 수집 실패 원인:\n{k_err}")
-            if t_err: st.error(f"🚨 [{T_CODE}] 수집 실패 원인:\n{t_err}")
+            # 💡 드디어 에러 로그가 화면에 뜹니다!
+            if k_err: st.error(f"🚨 [{K_CODE}] 셀레니움 수집 실패 원인:\n{k_err}")
+            if t_err: st.error(f"🚨 [{T_CODE}] 셀레니움 수집 실패 원인:\n{t_err}")
 
             history, cash, k_sh, t_sh, total_div, first_buy = [], INITIAL_CASH, 0, 0, 0, False
 
