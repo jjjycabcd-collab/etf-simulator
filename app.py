@@ -18,7 +18,7 @@ import streamlit.components.v1 as components
 # ==========================================
 # 웹 페이지 기본 설정
 # ==========================================
-st.set_page_config(page_title="ETF 배당 백테스트", layout="wide")
+st.set_page_config(page_title="ETF 백테스트", layout="wide")
 
 # ==========================================
 # 함수 정의부
@@ -179,18 +179,17 @@ def fmt_man(val):
     return f"{int(val) // 10000:,}만" if abs(val) >= 10000 else f"{int(val):,}"
 
 # ==========================================
-# UI 영역: 메인 화면 설정 (모바일 대응)
+# UI 영역: 메인 화면 설정
 # ==========================================
-st.title("📊 ETF 배당 시뮬레이터")
+st.title("📊 ETF 백테스트")
 
-# 설정 영역을 컨테이너로 감싸서 상단에 배치
 with st.container(border=True):
-    st.subheader("⚙️ ETF 배당 시뮬레이션 설정")
+    st.subheader("⚙️ 시뮬레이션 설정")
     
     col1, col2 = st.columns(2)
     with col1:
         cash_input = st.text_input("초기 투자금 (원)", "40000000")
-        period_input = st.text_input("백테스트 기간", "2025~2026", help="예: 2025 또는 2025.1~2026.2")
+        period_input = st.text_input("백테스트 기간 (2025 또는 2025.1~2026.1)", "2025~2026")
         
     with col2:
         etf_input = st.text_input("종목 코드 (쉼표 구분)", "498400, 472150")
@@ -202,7 +201,7 @@ with st.container(border=True):
 # 실행 영역
 # ==========================================
 if run_btn:
-    with st.spinner('시뮬레이션 중입니다. 잠시만 기다려주세요'):
+    with st.spinner('데이터 분석 및 백테스트 중...'):
         now = datetime.datetime.now()
         curr_year, curr_month = now.year, now.month
         INITIAL_CASH = int(re.sub(r'[^0-9]', '', cash_input)) if cash_input else 0
@@ -246,13 +245,13 @@ if run_btn:
         
         display_name = f"{K_NAME_RAW.split(' (')[0]}"
         if T_CODE: display_name += f", {T_NAME_RAW.split(' (')[0]}"
-        st.markdown(f"### 📈 {period_input} {display_name} ({', '.join(codes)})")
+        st.markdown(f"### 📈 백테스트 결과: {display_name}")
         
         k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts) if K_CODE else pd.Series(dtype=float, index=pd.to_datetime([]))
         t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts) if T_CODE else pd.Series(dtype=float, index=pd.to_datetime([]))
         
         if K_CODE and k_prices_all.empty:
-            st.error(f"⚠️ 네이버 금융에서 '{K_CODE}'의 가격 데이터를 가져오지 못했습니다.")
+            st.error(f"⚠️ '{K_CODE}' 가격 데이터를 불러올 수 없습니다.")
             
         k_divs_all = scrape_dividend_data(K_CODE, tuple(YEAR_RANGE)) if K_CODE else {}
         t_divs_all = scrape_dividend_data(T_CODE, tuple(YEAR_RANGE)) if T_CODE else {}
@@ -451,11 +450,6 @@ if run_btn:
             <div class="table-wrapper"><table><thead><tr><th>기간</th><th>주당배당</th><th>배당률</th><th>배당합계</th><th>기말자산</th><th>증감</th></tr></thead><tbody>{summary_rows}</tbody></table></div>
             <div class="section-title">🔍 상세 거래 내역 (과거순)</div>
             <div class="table-wrapper"><table><thead><tr><th>날짜</th><th>구분</th><th>종목</th><th>단가</th><th>수량</th><th>거래금액</th><th>배당금</th><th>잔고</th><th>총자산</th></tr></thead><tbody>{detailed_rows}</tbody></table></div>
-            <div class="note-box">
-                ※ 재투자 옵션 선택 시 받은 배당금을 그 다음 거래일에 매매하는 걸로 가정했습니다.<br>
-                ※ 인출(생활비) 옵션 선택 시 배당금은 재투자되지 않으며, '총 수익금'과 '총 수익률'은 인출한 배당금을 포함하여 계산됩니다.<br>
-                ※ 월말평가는 당월 마지막 거래일 종가와 수량을 계산한 값입니다.
-            </div>
             <script>
                 new Chart(document.getElementById('divChart'), {{ type: 'bar', data: {{ labels: {json.dumps(labels)}, datasets: [{{ label: '배당금(원)', data: {json.dumps(divs)}, backgroundColor: '#10b981', yAxisID: 'y' }}, {{ label: '주당 배당금(원)', data: {json.dumps(dps_list)}, type: 'line', borderColor: '#f59e0b', yAxisID: 'y1', tension: 0.3 }}] }}, options: {{ responsive: true, maintainAspectRatio: false }} }});
                 new Chart(document.getElementById('assetChart'), {{ type: 'line', data: {{ labels: {json.dumps(labels)}, datasets: [{{ label: '총자산(원)', data: {json.dumps(assets)}, borderColor: '#ef4444', fill: false, tension: 0.1 }}] }}, options: {{ responsive: true, maintainAspectRatio: false }} }});
