@@ -65,7 +65,6 @@ def fetch_actual_prices(code, start_date, end_date):
         except: pass
 
     all_prices = {}
-    # 네이버 차단 방지용 상세 헤더
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Referer': f'https://finance.naver.com/item/sise.naver?code={code}',
@@ -78,8 +77,6 @@ def fetch_actual_prices(code, start_date, end_date):
         try:
             res = requests.get(url, headers=headers, timeout=5)
             res.encoding = 'euc-kr' 
-            
-            # pandas read_html 오류 방지를 위해 BeautifulSoup으로 직접 파싱
             soup = BeautifulSoup(res.text, 'html.parser')
             rows = soup.find_all('tr')
             page_has_data = False
@@ -182,18 +179,24 @@ def fmt_man(val):
     return f"{int(val) // 10000:,}만" if abs(val) >= 10000 else f"{int(val):,}"
 
 # ==========================================
-# UI 영역: 사이드바 입력
+# UI 영역: 메인 화면 설정 (모바일 대응)
 # ==========================================
-with st.sidebar:
-    st.header("⚙️ 시뮬레이션 설정")
-    cash_input = st.text_input("초기 투자금 (원)", "40000000")
-    period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.2)", "2025~2026")
-    etf_input = st.text_input("종목 코드 (쉼표 구분)", "498400, 472150")
-    div_option = st.radio("배당금 처리", ["재투자", "인출(생활비)"], index=0)
-    run_btn = st.button("시뮬레이션 실행", type="primary")
+st.title("📊 ETF 배당 시뮬레이터")
 
-if not run_btn:
-    st.title("📊 ETF 배당 시뮬레이터")
+# 설정 영역을 컨테이너로 감싸서 상단에 배치
+with st.container(border=True):
+    st.subheader("⚙️ ETF 배당 시뮬레이션 설정")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        cash_input = st.text_input("초기 투자금 (원)", "40000000")
+        period_input = st.text_input("백테스트 기간", "2025~2026", help="예: 2025 또는 2025.1~2026.2")
+        
+    with col2:
+        etf_input = st.text_input("종목 코드 (쉼표 구분)", "498400, 472150")
+        div_option = st.radio("배당금 처리", ["재투자", "인출(생활비)"], index=0, horizontal=True)
+
+    run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
 
 # ==========================================
 # 실행 영역
@@ -243,13 +246,13 @@ if run_btn:
         
         display_name = f"{K_NAME_RAW.split(' (')[0]}"
         if T_CODE: display_name += f", {T_NAME_RAW.split(' (')[0]}"
-        st.title(f"📊 {period_input} {display_name} ({', '.join(codes)}) 백테스트")
+        st.markdown(f"### 📈 {period_input} {display_name} ({', '.join(codes)})")
         
         k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts) if K_CODE else pd.Series(dtype=float, index=pd.to_datetime([]))
         t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts) if T_CODE else pd.Series(dtype=float, index=pd.to_datetime([]))
         
         if K_CODE and k_prices_all.empty:
-            st.error(f"⚠️ 네이버 금융에서 '{K_CODE}'의 가격 데이터를 가져오지 못했습니다. 일시적 차단이거나 종목 코드가 잘못되었습니다.")
+            st.error(f"⚠️ 네이버 금융에서 '{K_CODE}'의 가격 데이터를 가져오지 못했습니다.")
             
         k_divs_all = scrape_dividend_data(K_CODE, tuple(YEAR_RANGE)) if K_CODE else {}
         t_divs_all = scrape_dividend_data(T_CODE, tuple(YEAR_RANGE)) if T_CODE else {}
@@ -271,9 +274,6 @@ if run_btn:
             k_d = k_divs_all.get(y, [None]*12)[m-1] if K_CODE else None
             t_d = t_divs_all.get(y, [None]*12)[m-1] if T_CODE else None
             
-            # ==================================================
-            # 단일 종목 (SINGLE) 모드 로직
-            # ==================================================
             if not T_CODE and K_CODE:
                 if not first_buy:
                     dt, p = get_safe_price(k_prices_all, y, m, 1)
@@ -308,9 +308,6 @@ if run_btn:
                     cur_p = int(k_m_prices.iloc[-1])
                     history.append({'연도':y,'월':f"{m}월",'날짜':last_dt.strftime('%y/%m/%d'),'구분':'평가','종목':K_CODE,'단가':cur_p,'수량':k_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+(k_sh*cur_p),'배당률':0.0})
 
-            # ==================================================
-            # 스윙 교체 (SWING) 모드 로직
-            # ==================================================
             elif T_CODE and K_CODE:
                 if t_sh > 0:
                     dt_pay = None
@@ -387,7 +384,6 @@ if run_btn:
                     history.append({'연도':y,'월':f"{m}월",'날짜':last_dt.strftime('%y/%m/%d'),'구분':'평가','종목':cur_ticker,'단가':cur_p,'수량':cur_sh,'거래금액':0,'수령배당금':0,'현금잔고':cash,'총자산':cash+val_k+val_t,'배당률':0.0})
 
         df_hist = pd.DataFrame(history)
-        
         if df_hist.empty:
             df_hist = pd.DataFrame(columns=['연도', '월', '날짜', '구분', '종목', '단가', '수량', '거래금액', '수령배당금', '현금잔고', '총자산', '배당률'])
 
@@ -403,14 +399,11 @@ if run_btn:
             prev_asset = m_final
 
         last_asset = assets[-1] if assets else INITIAL_CASH
-
         if div_option == "재투자":
             total_profit = last_asset - INITIAL_CASH
-            profit_rate = (total_profit / INITIAL_CASH) * 100 if INITIAL_CASH else 0
         else:
             total_profit = (last_asset + total_div) - INITIAL_CASH
-            profit_rate = (total_profit / INITIAL_CASH) * 100 if INITIAL_CASH else 0
-            
+        profit_rate = (total_profit / INITIAL_CASH) * 100 if INITIAL_CASH else 0
         profit_color = "#dc2626" if total_profit > 0 else "#2563eb"
 
         summary_rows = "".join([f"<tr><td>{s['기간']}</td><td>{int(s['주당배당금']):,}</td><td style='color:#f59e0b; font-weight:600;'>{s['배당률']:.2f}%</td><td>{fmt_man(s['배당금'])}</td><td><b>{fmt_man(s['총자산'])}</b></td><td style='color:{'#dc2626' if s['증감']>0 else '#2563eb'}; font-weight:600;'>{fmt_man(s['증감'])}</td></tr>" for s in monthly_summary[::-1]])
@@ -426,13 +419,14 @@ if run_btn:
             <meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
                 body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; color: #334155; }}
-                .card-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 25px; }}
+                .card-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 25px; }}
                 .card {{ background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-align: center; }}
                 .card h3 {{ font-size: 13px; margin: 0 0 8px 0; color: #64748b; font-weight: 600; }}
                 .card p {{ font-size: 16px; margin: 0; word-break: keep-all; }}
                 .section-title {{ font-size: 16px; font-weight: 700; margin: 30px 0 12px 0; border-left: 4px solid #3b82f6; padding-left: 8px; }}
                 .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 280px; margin-bottom: 20px; }}
-                table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; }}
+                .table-wrapper {{ overflow-x: auto; -webkit-overflow-scrolling: touch; }}
+                table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 12px; min-width: 600px; }}
                 th {{ background: #f1f5f9; padding: 12px; font-size: 12px; }}
                 td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; font-size: 12px; }}
                 .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; }}
@@ -454,9 +448,9 @@ if run_btn:
             <div class="section-title">📈 자산 성장 추이</div>
             <div class="chart-container"><canvas id="assetChart"></canvas></div>
             <div class="section-title">📅 월별 요약 (최신순)</div>
-            <table><thead><tr><th>기간</th><th>주당배당</th><th>배당률</th><th>배당합계</th><th>기말자산</th><th>증감</th></tr></thead><tbody>{summary_rows}</tbody></table>
+            <div class="table-wrapper"><table><thead><tr><th>기간</th><th>주당배당</th><th>배당률</th><th>배당합계</th><th>기말자산</th><th>증감</th></tr></thead><tbody>{summary_rows}</tbody></table></div>
             <div class="section-title">🔍 상세 거래 내역 (과거순)</div>
-            <table><thead><tr><th>날짜</th><th>구분</th><th>종목</th><th>단가</th><th>수량</th><th>거래금액</th><th>배당금</th><th>잔고</th><th>총자산</th></tr></thead><tbody>{detailed_rows}</tbody></table>
+            <div class="table-wrapper"><table><thead><tr><th>날짜</th><th>구분</th><th>종목</th><th>단가</th><th>수량</th><th>거래금액</th><th>배당금</th><th>잔고</th><th>총자산</th></tr></thead><tbody>{detailed_rows}</tbody></table></div>
             <div class="note-box">
                 ※ 재투자 옵션 선택 시 받은 배당금을 그 다음 거래일에 매매하는 걸로 가정했습니다.<br>
                 ※ 인출(생활비) 옵션 선택 시 배당금은 재투자되지 않으며, '총 수익금'과 '총 수익률'은 인출한 배당금을 포함하여 계산됩니다.<br>
