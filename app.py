@@ -221,7 +221,6 @@ if st.session_state.show_settings:
                 if not found.empty and found[0].year == y and found[0].month == m: return (found[0], int(ps.loc[found[0]]))
                 return (None, None)
 
-            # --- 시뮬레이션 로직 ---
             for y, m in target_ym:
                 k_d = k_divs_all.get(y, [None]*12)[m-1] if K_CODE else None
                 t_d = t_divs_all.get(y, [None]*12)[m-1] if T_CODE else None
@@ -319,7 +318,6 @@ if st.session_state.show_settings:
             df_hist = pd.DataFrame(history)
             monthly_summary, labels, divs, dps_list, assets, prev_asset = [], [], [], [], [], INITIAL_CASH
             
-            # --- 넘파이(Numpy) 직렬화 에러를 방지하기 위한 강제 형변환 적용 ---
             for y, m in target_ym:
                 m_data = df_hist[(df_hist['연도'] == y) & (df_hist['월'] == f"{m}월")]
                 if m_data.empty: continue
@@ -332,9 +330,17 @@ if st.session_state.show_settings:
                 monthly_summary.append({'기간': f"{y}.{m:02d}", '주당배당금': m_dps, '배당률': m_yld, '배당금': m_div, '총자산': m_final, '증감': int(m_final - prev_asset)})
                 prev_asset = m_final
 
+            # --- 핵심 변경점: 세션 메모리에 Dataframe을 직접 넣지 않고, 안전하게 JSON 텍스트로 바로 변환해서 넣습니다. ---
+            df_sum = pd.DataFrame(monthly_summary)
+            json_summary_str = df_sum.to_json(orient='records', force_ascii=False) if not df_sum.empty else "[]"
+            json_history_str = df_hist.to_json(orient='records', force_ascii=False) if not df_hist.empty else "[]"
+
             st.session_state.sim_result_data = {
-                'initial_cash': INITIAL_CASH, 'last_asset': assets[-1] if assets else INITIAL_CASH, 'total_div': total_div,
-                'monthly_summary': monthly_summary, 'df_hist': df_hist,
+                'initial_cash': INITIAL_CASH, 
+                'last_asset': assets[-1] if assets else INITIAL_CASH, 
+                'total_div': total_div,
+                'json_summary': json_summary_str, 
+                'json_history': json_history_str,
                 'labels': labels, 'divs': divs, 'dps_list': dps_list, 'assets': assets, 'div_option': div_option
             }
             st.session_state.run_clicked = True
@@ -348,15 +354,13 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
     st.markdown(st.session_state.display_title)
     
-    # 수익금/수익률 계산
     total_prof = (res['last_asset'] if res['div_option'] == "재투자" else res['last_asset'] + res['total_div']) - res['initial_cash']
     prof_rate = (total_prof / res['initial_cash']) * 100 if res['initial_cash'] else 0
     prof_col = "#dc2626" if total_prof > 0 else "#2563eb"
 
-    # JS로 전달할 JSON 데이터 세팅 (Pandas의 to_json 활용하여 numpy 에러 완벽 차단)
-    df_sum = pd.DataFrame(res['monthly_summary'])
-    json_summary = df_sum.to_json(orient='records', force_ascii=False) if not df_sum.empty else "[]"
-    json_history = res['df_hist'].to_json(orient='records', force_ascii=False) if not res['df_hist'].empty else "[]"
+    # 세션에서 이미 변환된 JSON 문자열을 바로 가져옵니다.
+    json_summary = res.get('json_summary', "[]")
+    json_history = res.get('json_history', "[]")
 
     html_code = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -423,11 +427,9 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
     </div>
 
     <script>
-        // 데이터 파싱
         const summaryData = {json_summary};
         const historyData = {json_history};
 
-        // 포맷팅 헬퍼 함수
         function fmtMan(val) {{
             if (val === 0 || val === '0') return "0";
             let num = parseInt(val, 10);
@@ -444,7 +446,6 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             return "eval";
         }}
 
-        // 월별 요약 렌더링 함수
         function renderSummary(order) {{
             let data = [...summaryData]; 
             if (order === 'desc') data.reverse(); 
@@ -463,7 +464,6 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             }}).join('');
         }}
 
-        // 상세 내역 렌더링 함수
         function renderHistory(order) {{
             let data = [...historyData];
             if (order === 'desc') data.reverse();
@@ -488,11 +488,9 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             }}).join('');
         }}
 
-        // 초기 렌더링 (설정된 기본값: 월별 최신순 / 상세 과거순)
         renderSummary('desc');
         renderHistory('asc');
 
-        // 차트 초기화
         const ctx1 = document.getElementById('divChart');
         new Chart(ctx1, {{ type: 'bar', data: {{ labels: {json.dumps(res['labels'])}, datasets: [{{ label: '배당금(원)', data: {json.dumps(res['divs'])}, backgroundColor: '#10b981', yAxisID: 'y' }}, {{ label: '주당 배당금(원)', data: {json.dumps(res['dps_list'])}, type: 'line', borderColor: '#f59e0b', yAxisID: 'y1', tension: 0.3 }}] }}, options: {{ responsive: true, maintainAspectRatio: false }} }});
         
