@@ -92,48 +92,53 @@ def fetch_actual_prices(code, start_date, end_date):
     return price_series
 
 def scrape_dividend_data(code, years_tuple):
+    """에러 메시지까지 함께 반환하도록 수정된 스크래핑 함수"""
     years = list(years_tuple)
     file_path = f"dividend_data_{code}.json"
-    err_img_path = f"debug_error_{code}.png"
-    
-    # 이전 에러 이미지 초기화
-    if os.path.exists(err_img_path): os.remove(err_img_path)
     
     if os.path.exists(file_path):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 cached_data = json.load(f)
                 parsed_cache = {int(k): v for k, v in cached_data.items()}
-                if all(y in parsed_cache for y in years): return parsed_cache
+                if all(y in parsed_cache for y in years): return parsed_cache, ""
         except: pass
 
     div_map = {y: [{'val':0, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)] for y in years}
     driver = None
+    error_msg = ""
+    
     try:
         options = webdriver.ChromeOptions()
-        options.add_argument('--headless=new') 
+        # 💡 클라우드 환경에서 충돌을 방지하기 위한 안전한 옵션 세팅
+        options.add_argument('--headless') 
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--window-size=400,800')
-        options.add_argument('user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--window-size=1920,1080')
+        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
         
+        # 💡 Streamlit Cloud의 시스템 크롬 드라이버를 최우선으로 찾습니다.
         chromedriver_path = shutil.which("chromedriver")
-        driver = webdriver.Chrome(service=Service(chromedriver_path if chromedriver_path else ChromeDriverManager().install()), options=options)
-        
+        if chromedriver_path:
+            driver = webdriver.Chrome(service=Service(chromedriver_path), options=options)
+        else:
+            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+            
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"})
         driver.get(f"https://www.etfcheck.co.kr/mobile/etpitem/{code}/cash/hist")
         
         try:
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.table-box table tbody tr td")))
-        except Exception as timeout_e:
-            driver.save_screenshot(err_img_path) 
+        except Exception:
+            error_msg = "화면은 열렸으나 테이블 데이터가 비동기로 렌더링되지 않았습니다. (봇 차단 의심)"
             
         time.sleep(2)
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         rows = soup.select('div.table-box table tbody tr')
         
-        if not rows and not os.path.exists(err_img_path):
-            driver.save_screenshot(err_img_path)
+        if not rows and not error_msg:
+            error_msg = "'tr' 태그를 전혀 찾을 수 없습니다. (HTML 구조 변경 또는 캡차 페이지)"
             
         for row in rows:
             tds = row.find_all('td')
@@ -146,11 +151,14 @@ def scrape_dividend_data(code, years_tuple):
                     p_day, r_day = (2, 3) if ex_date.day > 16 else (17, 18)
                     if pay_dt.year in years: div_map[pay_dt.year][pay_dt.month-1] = {'val': div_val, 'pay_day': p_day, 'reinv_day': r_day, 'yield': div_yield_val}
                 except: pass
+                
     except Exception as e:
-        if driver and not os.path.exists(err_img_path): driver.save_screenshot(err_img_path)
+        # 💡 브라우저가 뻗어버리면 이 예외처리로 빠지게 됩니다.
+        error_msg = f"크롬 브라우저 초기화 및 실행 실패: {str(e)}"
     finally:
         if driver: driver.quit()
 
+    # Fallback 로직 (데이터를 못 가져왔을 때 기본값)
     for y in years:
         if not any(item['val'] > 0 for item in div_map[y]):
             if code == '498400': div_map[y] = [{'val':230, 'pay_day':17, 'reinv_day':18, 'yield':0.0} for _ in range(12)]
@@ -159,7 +167,9 @@ def scrape_dividend_data(code, years_tuple):
     try:
         with open(file_path, "w", encoding="utf-8") as f: json.dump(div_map, f, ensure_ascii=False, indent=4)
     except: pass
-    return div_map
+    
+    # 💡 데이터와 함께 발생한 에러 메시지를 같이 반환합니다.
+    return div_map, error_msg
 
 def fmt_man(val): return "0" if val == 0 else (f"{int(val) // 10000:,}만" if abs(val) >= 10000 else f"{int(val):,}")
 
@@ -215,18 +225,16 @@ if st.session_state.show_settings:
             
             k_prices_all = fetch_actual_prices(K_CODE, start_ts, end_ts)
             t_prices_all = fetch_actual_prices(T_CODE, start_ts, end_ts) if T_CODE else pd.Series(dtype=float, index=pd.to_datetime([]))
-            k_divs_all, t_divs_all = scrape_dividend_data(K_CODE, tuple(YEAR_RANGE)), scrape_dividend_data(T_CODE, tuple(YEAR_RANGE)) if T_CODE else {}
-
-            # 💡 [디버깅 UI 출력] 에러 이미지가 생성되었다면 웹 화면에 띄웁니다.
-            err_found = False
-            for c in [K_CODE, T_CODE]:
-                if c and os.path.exists(f"debug_error_{c}.png"):
-                    st.error(f"🚨 {c} 종목 접근이 ETFCheck에 의해 차단되었습니다. (클라우드 IP 차단 의심)")
-                    st.image(f"debug_error_{c}.png", caption=f"클라우드 서버가 실제로 보고 있는 화면 ({c})", width=400)
-                    err_found = True
             
-            if err_found:
-                st.warning("위 화면처럼 데이터가 보이지 않거나 캡차(사람 확인)가 뜨면 Selenium으로는 클라우드 환경에서 스크래핑이 불가합니다.")
+            # 💡 수정된 함수 호출부: 에러 메시지를 함께 받아와서 화면에 뿌려줍니다.
+            k_divs_all, k_err = scrape_dividend_data(K_CODE, tuple(YEAR_RANGE))
+            if T_CODE:
+                t_divs_all, t_err = scrape_dividend_data(T_CODE, tuple(YEAR_RANGE))
+            else:
+                t_divs_all, t_err = {}, ""
+
+            if k_err: st.error(f"🚨 [{K_CODE}] 수집 실패: {k_err}")
+            if t_err: st.error(f"🚨 [{T_CODE}] 수집 실패: {t_err}")
 
             history, cash, k_sh, t_sh, total_div, first_buy = [], INITIAL_CASH, 0, 0, 0, False
 
