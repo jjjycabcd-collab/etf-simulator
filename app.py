@@ -103,11 +103,10 @@ def fetch_actual_prices(code, start_date, end_date):
     return price_series
 
 def scrape_dividend_data(code, years_tuple):
-    """ETFCheck 분배금 데이터 스크래핑 (명시적 대기 및 봇 탐지 우회 적용)"""
+    """ETFCheck 분배금 데이터 스크래핑 (디버깅 및 캡처 기능 강화)"""
     years = list(years_tuple)
     file_path = f"dividend_data_{code}.json"
     
-    # 1. 캐시 파일 확인
     if os.path.exists(file_path):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -120,9 +119,11 @@ def scrape_dividend_data(code, years_tuple):
     driver = None
     try:
         options = webdriver.ChromeOptions()
-        options.add_argument('--headless=new')
+        # 브라우저 창을 띄워서 확인하고 싶다면 아래 라인을 주석 처리(#) 하세요.
+        options.add_argument('--headless=new') 
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--window-size=400,800')
         options.add_argument('user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1')
         
         chromedriver_path = shutil.which("chromedriver")
@@ -134,24 +135,25 @@ def scrape_dividend_data(code, years_tuple):
 
         driver.get(f"https://www.etfcheck.co.kr/mobile/etpitem/{code}/cash/hist")
         
-        # 💡 Vue.js 렌더링 완료 대기: 실제 테이블의 td 데이터가 DOM에 나타날 때까지 최대 15초 대기
         try:
+            # 명시적 대기: 테이블 요소가 나타날 때까지 대기
             WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "table tbody tr td"))
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.table-box table tbody tr td"))
             )
         except Exception as timeout_e:
-            print(f"⚠️ [{code}] 테이블 데이터 로딩 시간 초과: {timeout_e}")
-
-        # 여분의 스크롤 처리 (Lazy loading 대비)
-        for _ in range(2): 
-            driver.execute_script("window.scrollBy(0, window.innerHeight);")
-            time.sleep(1)
+            print(f"⚠️ [{code}] 타임아웃! 테이블이 로드되지 않았습니다.")
+            driver.save_screenshot(f"debug_timeout_{code}.png") 
+            
+        time.sleep(2) # 렌더링 완료 후 혹시 모를 레이아웃 시프트 대기
             
         soup = BeautifulSoup(driver.page_source, 'html.parser')
-        rows = soup.find_all('tr')
+        
+        # 돔 구조에 맞춰 정확히 타겟팅
+        rows = soup.select('div.table-box table tbody tr')
         
         if not rows:
-            print(f"⚠️ [{code}] 데이터 행을 찾지 못했습니다. 접근이 차단되었거나 구조가 다릅니다.")
+            print(f"⚠️ [{code}] 'tr' 태그를 찾지 못했습니다. 화면을 캡처합니다.")
+            driver.save_screenshot(f"debug_notfound_{code}.png")
             
         for row in rows:
             tds = row.find_all('td')
@@ -164,8 +166,8 @@ def scrape_dividend_data(code, years_tuple):
                     p_day, r_day = (2, 3) if ex_date.day > 16 else (17, 18)
                     if pay_dt.year in years: 
                         div_map[pay_dt.year][pay_dt.month-1] = {'val': div_val, 'pay_day': p_day, 'reinv_day': r_day, 'yield': div_yield_val}
-                except Exception: 
-                    pass
+                except Exception as parse_e: 
+                    print(f"파싱 에러: {parse_e}")
     except Exception as e:
         print(f"스크래핑 전체 에러: {e}")
     finally:
