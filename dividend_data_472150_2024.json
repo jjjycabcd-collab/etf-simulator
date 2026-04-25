@@ -1,0 +1,76 @@
+{
+    "2024": [
+        {
+            "val": 62,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.6
+        },
+        {
+            "val": 0,
+            "pay_day": 17,
+            "reinv_day": 18,
+            "yield": 0
+        },
+        {
+            "val": 62,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.61
+        },
+        {
+            "val": 64,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.57
+        },
+        {
+            "val": 64,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.59
+        },
+        {
+            "val": 64,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.58
+        },
+        {
+            "val": 67,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.58
+        },
+        {
+            "val": 67,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.59
+        },
+        {
+            "val": 67,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.61
+        },
+        {
+            "val": 67,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.63
+        },
+        {
+            "val": 67,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.64
+        },
+        {
+            "val": 67,
+            "pay_day": 2,
+            "reinv_day": 3,
+            "yield": 0.67
+        }
+    ]
+}
