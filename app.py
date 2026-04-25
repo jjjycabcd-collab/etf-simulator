@@ -422,21 +422,21 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         const historyData = {json_history};
 
         // 포맷팅 헬퍼 함수
-        function fmtMan(val) {
+        function fmtMan(val) {{
             if (val === 0 || val === '0') return "0";
             let num = parseInt(val, 10);
             if (Math.abs(num) >= 10000) {{
                 return Math.floor(num / 10000).toLocaleString() + "만";
             }}
             return num.toLocaleString();
-        }
+        }}
 
-        function getCls(cat) {
+        function getCls(cat) {{
             if (cat.includes("매수") || cat.includes("재투자")) return "buy";
             if (cat.includes("매도")) return "sell";
             if (cat.includes("배당")) return "div";
             return "eval";
-        }
+        }}
 
         // 월별 요약 렌더링 함수
         function renderSummary(order) {{
