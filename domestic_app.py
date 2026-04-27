@@ -65,7 +65,6 @@ def fetch_prices_and_dividends(code, start_date, end_date):
 # ==========================================
 st.title("🇰🇷 국내 주식 배당 재투자 시뮬레이터")
 
-# 안내 멘트 추가
 st.info("""
 💡 **참고사항 (데이터 한계)**
 
@@ -156,25 +155,21 @@ if st.session_state.show_settings:
                 history, summary, asset_by_date = [], [], {}
                 prev_asset = INITIAL_CASH
                 
-                reinvest_flag = False # 배당금 다음 날 재투자를 위한 플래그
+                reinvest_flag = False
 
-                # 일 단위 루프 (배당금 체크 및 다음 날 재투자)
                 for date, price in prices.items():
                     is_invest_day = date in invest_dates_set
                     
-                    # 정기 매수일 처리
                     if is_invest_day:
                         reserve_cash -= installment
                         available_cash += installment
                         
-                    # 매수 실행 (정기 매수일이거나 배당금 재투자 플래그가 켜져 있을 때)
                     if is_invest_day or reinvest_flag:
                         shares_to_buy = int(available_cash // float(price))
                         if shares_to_buy > 0:
                             available_cash -= shares_to_buy * float(price)
                             total_shares += shares_to_buy
                             
-                            # 구분 텍스트 설정
                             if is_invest_day and reinvest_flag:
                                 gubun_text = '매수+재투자'
                             elif reinvest_flag:
@@ -189,9 +184,8 @@ if st.session_state.show_settings:
                                 '총자산': float(reserve_cash + available_cash + (total_shares * price))
                             })
                         
-                        reinvest_flag = False # 재투자 완료 후 플래그 해제
+                        reinvest_flag = False
 
-                    # 배당금 수취 (오늘 수취하면 다음 날 재투자를 위해 플래그 설정)
                     if date in div_dates_set and total_shares > 0:
                         div_amount = total_shares * float(divs[date])
                         available_cash += div_amount
@@ -200,9 +194,8 @@ if st.session_state.show_settings:
                             '수량': int(total_shares), '거래금액': div_amount, '현금잔고': float(reserve_cash + available_cash),
                             '총자산': float(reserve_cash + available_cash + (total_shares * price))
                         })
-                        reinvest_flag = True # 배당금이 들어왔으므로 다음 거래일에 무조건 매수하도록 설정
+                        reinvest_flag = True
                     
-                    # 주간 평가 데이터 저장
                     label = date.strftime('%Y/%m/%d')
                     if label in chart_labels:
                         cur_asset = float(reserve_cash + available_cash + (total_shares * price))
@@ -219,10 +212,28 @@ if st.session_state.show_settings:
                     if lbl in asset_by_date: last_val = asset_by_date[lbl]
                     chart_vals.append(last_val)
 
+                # ==========================================
+                # 추가: 차트와 테이블 금액 동기화를 위한 최종 평가 내역 추가
+                # ==========================================
+                last_date = prices.index[-1]
+                last_price = float(prices.iloc[-1])
+                final_eval_asset = float(reserve_cash + available_cash + (total_shares * last_price))
+                
+                # 마지막 거래일 기준으로 상세 내역에 강제로 기록
+                history.append({
+                    '날짜': last_date.strftime('%Y/%m/%d'), 
+                    '구분': '최종평가', 
+                    '단가': last_price,
+                    '수량': int(total_shares), 
+                    '거래금액': 0.0, 
+                    '현금잔고': float(reserve_cash + available_cash),
+                    '총자산': final_eval_asset
+                })
+
                 all_sim_data[t_key] = {
                     'name': target['name'], 'summary': summary, 'history': history,
-                    'chart_values': chart_vals, 'final_asset': prev_asset,
-                    'total_profit': prev_asset - INITIAL_CASH, 'profit_rate': ((prev_asset / INITIAL_CASH) - 1) * 100
+                    'chart_values': chart_vals, 'final_asset': final_eval_asset,
+                    'total_profit': final_eval_asset - INITIAL_CASH, 'profit_rate': ((final_eval_asset / INITIAL_CASH) - 1) * 100
                 }
 
             st.session_state.sim_result_data = {
@@ -233,7 +244,7 @@ if st.session_state.show_settings:
             st.rerun()
 
 # ==========================================
-# 결과 출력 영역 (Client-Side Rendering)
+# 결과 출력 영역
 # ==========================================
 if st.session_state.run_clicked and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
@@ -260,6 +271,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         .buy {{ background: #ef4444; }} 
         .div {{ background: #10b981; }}
         .reinvest {{ background: #8b5cf6; }}
+        .eval {{ background: #64748b; }} /* 최종평가 전용 뱃지 색상 추가 */
         .header-flex {{ display: flex; justify-content: space-between; align-items: center; margin: 25px 0 10px 0; }}
         .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; }}
     </style>
@@ -300,6 +312,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         function getBadgeClass(type) {{
             if(type.includes('배당금')) return 'div';
             if(type.includes('재투자')) return 'reinvest';
+            if(type.includes('최종평가')) return 'eval';
             return 'buy';
         }}
 
@@ -319,7 +332,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             
             let historyData = d.history.slice();
             if (sortOrder === 'desc') {{
-                historyData.reverse(); // 최신순
+                historyData.reverse(); 
             }}
             
             document.getElementById('tbody').innerHTML = historyData.map(h => `
@@ -328,7 +341,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                     <td><span class="badge ${{getBadgeClass(h.구분)}}">${{h.구분}}</span></td>
                     <td>${{fmt(h.단가)}}</td>
                     <td>${{h.수량}}</td>
-                    <td>${{fmt(h.거래금액)}}</td>
+                    <td>${{h.거래금액 > 0 ? fmt(h.거래금액) : '-'}}</td>
                     <td>${{fmt(h.현금잔고)}}</td>
                     <td><strong>${{fmt(h.총자산)}}</strong></td>
                 </tr>
