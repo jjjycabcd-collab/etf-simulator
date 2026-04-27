@@ -260,4 +260,187 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             })
 
     html_code = f"""
-    <!DOCTYPE html><html><head><meta charset="utf-
+    <!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; color: #334155; }}
+        .card-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; margin-bottom: 25px; }}
+        .card {{ background: white; padding: 18px 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border-top: 4px solid #94a3b8; text-align: left; }}
+        .card h3 {{ font-size: 14px; margin: 0 0 15px 0; color: #1e293b; font-weight:700; line-height: 1.4; word-break: keep-all; }}
+        .card-row {{ display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 8px; color: #64748b; }}
+        .card-row.bold {{ font-weight: 600; color: #334155; }}
+        .card-divider {{ border-top: 1px dashed #cbd5e1; margin: 12px 0; }}
+        .card-total {{ display: flex; justify-content: space-between; font-size: 15px; font-weight: 800; color: #0f172a; align-items: center; }}
+        .section-title {{ font-size: 16px; font-weight: 700; margin: 30px 0 12px 0; border-left: 4px solid #3b82f6; padding-left: 8px; }}
+        .header-flex {{ display: flex; align-items: center; justify-content: space-between; margin: 25px 0 10px 0; }}
+        .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; }}
+        .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 380px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }}
+        .table-wrapper {{ overflow-x: auto; background: white; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }}
+        table {{ width: 100%; border-collapse: collapse; min-width: 600px; }}
+        th {{ background: #f8fafc; padding: 12px; font-size: 12px; border-bottom: 2px solid #e2e8f0; color: #475569; }}
+        td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; font-size: 13px; color: #334155; }}
+        .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; }}
+        .buy {{ background: #ef4444; }} .sell {{ background: #3b82f6; }} .eval {{ background: #94a3b8; }}
+    </style>
+    </head><body>
+    
+    <div class="section-title">📈 자산 성장 비교 (원)</div>
+    <div class="chart-container"><canvas id="assetChart"></canvas></div>
+
+    <div class="card-grid" id="stat-cards"></div>
+    
+    <div class="header-flex">
+        <div style="display:flex; align-items:center; gap:10px;">
+            <span style="font-weight:700; font-size:16px;">📅 주별 요약</span>
+            <select id="ticker-select-summary" class="sort-select" onchange="renderTables()"></select>
+        </div>
+        <select id="sort-select-summary" class="sort-select" onchange="renderTables()">
+            <option value="desc">최신순</option>
+            <option value="asc">과거순</option>
+        </select>
+    </div>
+    <div class="table-wrapper">
+        <table><thead><tr><th>기간</th><th>기말단가</th><th>기말자산</th><th>증감</th><th>누적수익률</th></tr></thead>
+        <tbody id="summary-tbody"></tbody></table>
+    </div>
+
+    <div class="header-flex">
+        <div style="display:flex; align-items:center; gap:10px;">
+            <span style="font-weight:700; font-size:16px;">🔍 상세 거래 내역</span>
+            <select id="ticker-select-history" class="sort-select" onchange="renderTables()"></select>
+        </div>
+        <select id="sort-select-history" class="sort-select" onchange="renderTables()">
+            <option value="asc">과거순</option>
+            <option value="desc">최신순</option>
+        </select>
+    </div>
+    <div class="table-wrapper">
+        <table><thead><tr><th>날짜</th><th>구분</th><th>단가</th><th>수량</th><th>거래금액</th><th>잔고(대기자금 포함)</th><th>총자산</th></tr></thead>
+        <tbody id="history-tbody"></tbody></table>
+    </div>
+
+    <script>
+        const allData = {json.dumps(res['all_data'])};
+        const compareKeys = {json.dumps(res['compare_keys'])};
+        const labels = {json.dumps(res['labels'])};
+        const initialCash = {res['initial_cash']};
+
+        const tSelSum = document.getElementById('ticker-select-summary');
+        const tSelHis = document.getElementById('ticker-select-history');
+        compareKeys.forEach(t => {{
+            if(allData[t]) {{
+                let opt1 = new Option(allData[t].name, t);
+                let opt2 = new Option(allData[t].name, t);
+                tSelSum.add(opt1); tSelHis.add(opt2);
+            }}
+        }});
+
+        function fmtMoney(val) {{
+            if (val === 0 || val === '0') return "0원";
+            let num = Number(val);
+            if (Math.abs(num) >= 10000) {{
+                return Math.floor(num / 10000).toLocaleString() + "만 원";
+            }}
+            return Math.floor(num).toLocaleString() + "원";
+        }}
+
+        function renderTables() {{
+            const targetSum = tSelSum.value;
+            const targetHis = tSelHis.value;
+            const sortSum = document.getElementById('sort-select-summary').value;
+            const sortHis = document.getElementById('sort-select-history').value;
+
+            document.getElementById('stat-cards').innerHTML = compareKeys.map(t => {{
+                if(!allData[t]) return "";
+                const d = allData[t];
+                const profitColor = d.total_profit >= 0 ? '#dc2626' : '#2563eb';
+                const sign = d.total_profit > 0 ? '+' : '';
+                
+                return `<div class="card" style="border-top-color: ${{getTickerColor(t)}}">
+                    <h3>${{d.name}}</h3>
+                    
+                    <div class="card-row">
+                        <span>초기 투자금</span>
+                        <span class="bold">${{fmtMoney(initialCash)}}</span>
+                    </div>
+                    
+                    <div class="card-row">
+                        <span>수익금</span>
+                        <span style="font-weight: 600; color: ${{profitColor}};">
+                            ${{sign}}${{fmtMoney(d.total_profit)}} (${{d.profit_rate.toFixed(2)}}%)
+                        </span>
+                    </div>
+                    
+                    <div class="card-divider"></div>
+                    
+                    <div class="card-total">
+                        <span>최종 자산</span>
+                        <span style="color: #dc2626; font-size: 18px;">${{fmtMoney(d.final_asset)}}</span>
+                    </div>
+                </div>`;
+            }}).join('');
+
+            let sData = [...allData[targetSum].summary];
+            if(sortSum === 'desc') sData.reverse();
+            document.getElementById('summary-tbody').innerHTML = sData.map(s => `
+                <tr>
+                    <td>${{s.기간}}</td>
+                    <td>${{fmtMoney(s.기말단가)}}</td>
+                    <td><b>${{fmtMoney(s.기말자산)}}</b></td>
+                    <td style="color:${{s.증감 >=0 ? '#dc2626':'#2563eb'}}; font-weight:600;">${{s.증감 > 0 ? '+' : ''}}${{fmtMoney(s.증감)}}</td>
+                    <td style="color:${{s.수익률 >=0 ? '#dc2626':'#2563eb'}}; font-weight:600;">${{s.수익률.toFixed(2)}}%</td>
+                </tr>
+            `).join('');
+
+            let hData = [...allData[targetHis].history];
+            if(sortHis === 'desc') hData.reverse();
+            document.getElementById('history-tbody').innerHTML = hData.map(h => `
+                <tr>
+                    <td>${{h.날짜}}</td>
+                    <td><span class="badge ${{h.구분.includes('매수') ? 'buy' : 'eval'}}">${{h.구분}}</span></td>
+                    <td>${{fmtMoney(h.단가)}}</td>
+                    <td>${{h.수량.toLocaleString()}}</td>
+                    <td>${{h.거래금액 > 0 ? fmtMoney(h.거래금액) : '-'}}</td>
+                    <td>${{fmtMoney(h.현금잔고)}}</td>
+                    <td style="font-weight:700;">${{fmtMoney(h.총자산)}}</td>
+                </tr>
+            `).join('');
+        }}
+
+        function getTickerColor(ticker) {{
+            const idx = compareKeys.indexOf(ticker);
+            const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4'];
+            return colors[idx % colors.length];
+        }}
+
+        let chartDatasets = {json.dumps(datasets)};
+
+        new Chart(document.getElementById('assetChart'), {{
+            type: 'line',
+            data: {{ labels: labels, datasets: chartDatasets }},
+            options: {{ 
+                responsive: true, 
+                maintainAspectRatio: false,
+                interaction: {{ mode: 'index', intersect: false }},
+                plugins: {{
+                    legend: {{ position: 'top', labels: {{ usePointStyle: true, boxWidth: 8 }} }}
+                }},
+                scales: {{ 
+                    y: {{ 
+                        grid: {{ color: '#f1f5f9' }},
+                        ticks: {{ 
+                            color: '#64748b',
+                            callback: function(value) {{ 
+                                return (value / 10000).toLocaleString() + '만'; 
+                            }} 
+                        }} 
+                    }},
+                    x: {{ grid: {{ display: false }}, ticks: {{ color: '#64748b' }} }}
+                }}
+            }}
+        }});
+
+        renderTables();
+    </script>
+    </body></html>
+    """
+    components.html(html_code, height=2500, scrolling=True)
