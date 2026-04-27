@@ -207,7 +207,7 @@ if st.session_state.show_settings:
             st.rerun()
 
 # ==========================================
-# 결과 출력 영역 (기존과 동일한 UI 구조 유지)
+# 결과 출력 영역 (Client-Side Rendering)
 # ==========================================
 if st.session_state.run_clicked and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
@@ -220,25 +220,45 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
     html_code = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; }}
+        body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; color: #334155; }}
         .card-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px; }}
         .card {{ background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-top: 4px solid #94a3b8; }}
         .card h3 {{ font-size: 13px; margin: 0 0 10px 0; }}
         .card-row {{ display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 5px; }}
         .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 350px; margin-bottom: 20px; }}
         .table-wrapper {{ overflow-x: auto; background: white; border-radius: 10px; margin-bottom: 20px; }}
-        table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
-        th {{ background: #f1f5f9; padding: 10px; border-bottom: 1px solid #e2e8f0; }}
-        td {{ padding: 8px; border-bottom: 1px solid #f1f5f9; text-align: center; }}
-        .badge {{ padding: 2px 5px; border-radius: 4px; color: white; font-size: 10px; }}
+        table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+        th {{ background: #f1f5f9; padding: 12px 10px; border-bottom: 1px solid #e2e8f0; color: #475569; }}
+        td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; }}
+        .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; }}
         .buy {{ background: #ef4444; }} .div {{ background: #10b981; }}
+        .header-flex {{ display: flex; justify-content: space-between; align-items: center; margin: 25px 0 10px 0; }}
+        .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; }}
     </style>
     </head><body>
     <div class="chart-container"><canvas id="assetChart"></canvas></div>
     <div class="card-grid" id="stat-cards"></div>
-    <div style="font-weight:700; margin: 20px 0 10px 0;">🔍 상세 거래 내역 (배당 포함)</div>
-    <select id="ticker-select" style="padding: 5px; margin-bottom: 10px;" onchange="renderTable()"></select>
-    <div class="table-wrapper"><table><thead><tr><th>날짜</th><th>구분</th><th>단가/분배금</th><th>수량</th><th>금액</th><th>현금잔고</th><th>총자산</th></tr></thead><tbody id="tbody"></tbody></table></div>
+    
+    <div class="header-flex">
+        <div style="display:flex; align-items:center; gap:10px;">
+            <span style="font-weight:700; font-size:16px;">🔍 상세 거래 내역 (배당 포함)</span>
+            <select id="ticker-select" class="sort-select" onchange="renderTable()"></select>
+        </div>
+        <select id="sort-select-history" class="sort-select" onchange="renderTable()">
+            <option value="desc">최신순</option>
+            <option value="asc">과거순</option>
+        </select>
+    </div>
+    
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr><th>날짜</th><th>구분</th><th>단가/분배금</th><th>수량</th><th>금액</th><th>현금잔고</th><th>총자산</th></tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+        </table>
+    </div>
+    
     <script>
         const data = {json.dumps(res['all_data'])};
         const keys = {json.dumps(res['compare_keys'])};
@@ -252,18 +272,32 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         function renderTable() {{
             const k = sel.value;
             const d = data[k];
+            const sortOrder = document.getElementById('sort-select-history').value;
+            
             document.getElementById('stat-cards').innerHTML = keys.map(key => {{
                 const item = data[key];
                 return `<div class="card" style="border-top-color: ${{key===k?'#ef4444':'#94a3b8'}}">
                     <h3>${{item.name}}</h3>
                     <div class="card-row"><span>최종 자산</span><strong>${{fmt(item.final_asset)}}</strong></div>
-                    <div class="card-row"><span>수익률</span><span style="color:red">${{item.profit_rate.toFixed(2)}}%</span></div>
+                    <div class="card-row"><span>수익률</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}">${{item.profit_rate.toFixed(2)}}%</span></div>
                 </div>`;
             }}).join('');
             
-            document.getElementById('tbody').innerHTML = d.history.slice().reverse().map(h => `
-                <tr><td>${{h.날짜}}</td><td><span class="badge ${{h.구분==='배당금'?'div':'buy'}}">${{h.구분}}</span></td>
-                <td>${{fmt(h.단가)}}</td><td>${{h.수량}}</td><td>${{fmt(h.거래금액)}}</td><td>${{fmt(h.현금잔고)}}</td><td><strong>${{fmt(h.총자산)}}</strong></td></tr>
+            let historyData = d.history.slice();
+            if (sortOrder === 'desc') {{
+                historyData.reverse(); // 최신순
+            }}
+            
+            document.getElementById('tbody').innerHTML = historyData.map(h => `
+                <tr>
+                    <td>${{h.날짜}}</td>
+                    <td><span class="badge ${{h.구분==='배당금'?'div':'buy'}}">${{h.구분}}</span></td>
+                    <td>${{fmt(h.단가)}}</td>
+                    <td>${{h.수량}}</td>
+                    <td>${{fmt(h.거래금액)}}</td>
+                    <td>${{fmt(h.현금잔고)}}</td>
+                    <td><strong>${{fmt(h.총자산)}}</strong></td>
+                </tr>
             `).join('');
         }}
 
@@ -271,6 +305,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             type: 'line', data: {{ labels: labels, datasets: {json.dumps(datasets)} }},
             options: {{ responsive: true, maintainAspectRatio: false, scales: {{ y: {{ ticks: {{ callback: v => (v/10000) + '만' }} }} }} }}
         }});
+        
         renderTable();
     </script></body></html>
     """
