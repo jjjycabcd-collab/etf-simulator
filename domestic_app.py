@@ -86,7 +86,6 @@ if st.session_state.show_settings:
         with col1:
             cash_input = st.text_input("초기 총 투자금 (원)", "40,000,000")
             period_input = st.text_input("백테스트 기간", "2025~2026")
-            # 추가된 배당금 처리 옵션
             div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True)
 
         with col2:
@@ -153,8 +152,11 @@ if st.session_state.show_settings:
                 invest_dates_set = set(invest_dates)
                 div_dates_set = set(divs.index)
                 
+                # 매월 말일 계산 (월말평가용)
+                eom_dates_set = set(prices.groupby([prices.index.year, prices.index.month]).tail(1).index)
+                
                 reserve_cash, available_cash, total_shares = INITIAL_CASH, 0.0, 0
-                total_withdrawn = 0.0 # 누적 인출금 트래킹용
+                total_withdrawn = 0.0 
                 history, summary, asset_by_date = [], [], {}
                 monthly_data = {}
                 prev_asset = INITIAL_CASH
@@ -214,11 +216,18 @@ if st.session_state.show_settings:
                             history.append({
                                 '날짜': date.strftime('%Y/%m/%d'), '구분': '배당금(인출)', '단가': float(divs[date]),
                                 '수량': int(total_shares), '거래금액': div_amount, '현금잔고': float(reserve_cash + available_cash),
-                                '총자산': float(reserve_cash + available_cash + (total_shares * price)) # 포트폴리오 자산에는 미포함
+                                '총자산': float(reserve_cash + available_cash + (total_shares * price))
                             })
-                            # reinvest_flag는 False 유지
                     
                     cur_asset = float(reserve_cash + available_cash + (total_shares * price))
+                    
+                    # 월말평가 기록 (마지막 전체 평가일과 중복되지 않도록 처리)
+                    if date in eom_dates_set and date != prices.index[-1]:
+                        history.append({
+                            '날짜': date.strftime('%Y/%m/%d'), '구분': '월말평가', '단가': float(price),
+                            '수량': int(total_shares), '거래금액': 0.0, '현금잔고': float(reserve_cash + available_cash),
+                            '총자산': cur_asset
+                        })
                     
                     monthly_data[month_str]['end_asset'] = cur_asset
                     monthly_data[month_str]['end_price'] = float(price)
@@ -269,7 +278,6 @@ if st.session_state.show_settings:
                     })
                     prev_m_asset = m_data['end_asset']
                     
-                # 총 수익 계산 시 인출액(total_withdrawn) 보정
                 real_total_asset = final_eval_asset + total_withdrawn
 
                 all_sim_data[t_key] = {
@@ -316,9 +324,10 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; }}
         .buy {{ background: #ef4444; }} 
         .div {{ background: #10b981; }}
-        .withdraw {{ background: #f59e0b; }} /* 배당금 인출 주황색 배지 */
+        .withdraw {{ background: #f59e0b; }} 
         .reinvest {{ background: #8b5cf6; }}
         .eval {{ background: #64748b; }}
+        .eval-month {{ background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }} /* 월말평가용 뱃지 스타일 */
         .header-flex {{ display: flex; justify-content: space-between; align-items: center; margin: 25px 0 10px 0; }}
         .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; }}
         .section-icon {{ border-left: 3px solid #3b82f6; padding-left: 8px; }}
@@ -395,6 +404,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         }}
 
         function getBadgeClass(type) {{
+            if(type.includes('월말평가')) return 'eval-month';
             if(type.includes('배당금(인출)')) return 'withdraw';
             if(type.includes('배당금')) return 'div';
             if(type.includes('재투자')) return 'reinvest';
@@ -406,7 +416,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             const k = sel.value;
             const d = data[k];
             
-            // 요약 카드 렌더링 (인출/재투자 분기 적용)
+            // 요약 카드 렌더링
             document.getElementById('stat-cards').innerHTML = keys.map(key => {{
                 const item = data[key];
                 const isWithdrawal = item.div_action === '인출(생활비)';
@@ -422,11 +432,11 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                     <h3>${{item.name}}</h3>
                     <div class="card-row"><span>${{assetLabel}}</span><strong>${{fmt(item.final_asset)}}</strong></div>
                     ${{withdrawRow}}
-                    <div class="card-row"><span>${{profitLabel}}</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${{fmt(item.total_profit)}} (${{item.profit_rate.toFixed(2)}}%)</span></div>
+                    <div class="card-row"><span>${{profitLabel}}</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${fmt(item.total_profit)} (${{item.profit_rate.toFixed(2)}}%)</span></div>
                 </div>`;
             }}).join('');
             
-            // 1. 월별 요약 테이블 렌더링
+            // 월별 요약 테이블
             const sortMonthlyOrder = document.getElementById('sort-select-monthly').value;
             let monthlyData = d.monthly_summary.slice();
             if (sortMonthlyOrder === 'desc') {{
@@ -446,7 +456,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                 </tr>
             `).join('');
             
-            // 2. 상세 거래 내역 테이블 렌더링
+            // 상세 거래 내역 테이블
             const sortHistoryOrder = document.getElementById('sort-select-history').value;
             let historyData = d.history.slice();
             if (sortHistoryOrder === 'desc') {{
