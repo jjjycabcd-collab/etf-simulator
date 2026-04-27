@@ -62,33 +62,33 @@ def fetch_prices_and_dividends(code, start_date, end_date):
 # ==========================================
 # UI 영역
 # ==========================================
-st.title("🇰🇷 월배당 ETF 백테스트")
 
-# 💡 상단 네비게이션 (국내/해외 링크 분기)
-st.markdown("<br>", unsafe_allow_html=True)
-col_nav1, col_nav2 = st.columns(2)
-with col_nav1:
-    # 현재 페이지 (버튼 형태로 시각적 강조)
-    st.button("🇰🇷 국내 월배당 ETF (현재 페이지)", type="primary", use_container_width=True, disabled=True)
-with col_nav2:
-    # 해외 페이지 링크
-    st.link_button("🌎 해외 ETF 시뮬레이터 이동", "https://etf-simulator-qqq.streamlit.app/", use_container_width=True)
-st.markdown("<br>", unsafe_allow_html=True)
-
-st.info("""
-💡 **참고사항 (데이터 한계 및 기준)**
-
-* **순수 종가 사용:** 본 시뮬레이터는 배당 수익 이중 계산 방지를 위해 수정주가(Adj Close)가 아닌 **실제 거래된 일별 종가(Close)**를 기준으로 단가를 계산합니다.
-* **배당 기준 시점:** yfinance에서 제공하는 배당 기준일은 실제 입금일이 아닌 **'배당락일(Ex-Dividend Date)'**입니다. 재투자 모드 시 배당락일 당일 종가에 전액 재투자되는 것으로 백테스트가 진행됩니다.
-* **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일(배당 수취 확정)이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수하여 배당 주기를 극대화합니다.
-""")
-
+# 💡 결과 화면에서는 상단 메뉴들을 감추고, 다시 설정 버튼만 표시
 if st.session_state.run_clicked and not st.session_state.show_settings:
     if st.button("⚙️ 테스트 환경 다시 설정하기", use_container_width=True):
         st.session_state.show_settings = True
         st.rerun()
 
 if st.session_state.show_settings:
+    st.title("🇰🇷 월배당 ETF 백테스트")
+
+    # 💡 상단 네비게이션 (국내/해외 링크 분기)
+    st.markdown("<br>", unsafe_allow_html=True)
+    col_nav1, col_nav2 = st.columns(2)
+    with col_nav1:
+        st.button("🇰🇷 국내 월배당 ETF (현재 페이지)", type="primary", use_container_width=True, disabled=True)
+    with col_nav2:
+        st.link_button("🌎 해외 ETF 시뮬레이터 이동", "https://etf-simulator-qqq.streamlit.app/", use_container_width=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    st.info("""
+    💡 **참고사항 (데이터 한계 및 기준)**
+
+    * **순수 종가 사용:** 본 시뮬레이터는 배당 수익 이중 계산 방지를 위해 수정주가(Adj Close)가 아닌 **실제 거래된 일별 종가(Close)**를 기준으로 단가를 계산합니다.
+    * **배당 기준 시점:** yfinance에서 제공하는 배당 기준일은 실제 입금일이 아닌 **'배당락일(Ex-Dividend Date)'**입니다. 재투자 모드 시 배당락일 당일 종가에 전액 재투자되는 것으로 백테스트가 진행됩니다.
+    * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일(배당 수취 확정)이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수하여 배당 주기를 극대화합니다.
+    """)
+
     with st.container(border=True):
         st.subheader("⚙️ 테스트 환경")
         col1, col2 = st.columns(2)
@@ -121,7 +121,6 @@ if st.session_state.show_settings:
             except:
                 start_dt, end_dt = pd.to_datetime("2025-01-01"), pd.to_datetime("2026-12-31")
 
-            # 타겟 파싱
             raw_target_strs = [t.strip().upper() for t in etf_input.split(',') if t.strip()][:4]
             targets = []
             compare_keys = [] 
@@ -138,7 +137,6 @@ if st.session_state.show_settings:
                     targets.append({'key': t, 'ticker': t, 'strategy': "거치식 (일괄 매수)", 'name': name})
                     compare_keys.append(t)
 
-            # 전체 필요 종목(티커) 단위로 데이터 수집
             all_tickers_needed = set()
             for target in targets:
                 for tk in target['ticker'].split('+'):
@@ -150,10 +148,8 @@ if st.session_state.show_settings:
                 if not p.empty:
                     target_raw_data[tk] = (p, d)
 
-            # 모든 거래일을 포괄하는 통합 날짜 리스트 생성
             all_trading_dates = sorted(list(set(d for p, _ in target_raw_data.values() for d in p.index)))
 
-            # 결측치 방지를 위한 데이터 Forward Fill
             processed_data = {}
             for tk, (p, d) in target_raw_data.items():
                 processed_data[tk] = (p.reindex(all_trading_dates).ffill(), d.reindex(all_trading_dates).fillna(0.0))
@@ -194,13 +190,12 @@ if st.session_state.show_settings:
 
                 for date in all_trading_dates:
                     price = processed_data[current_ticker][0][date]
-                    if pd.isna(price): continue # 아직 상장 전
+                    if pd.isna(price): continue 
 
                     month_str = date.strftime('%Y.%m')
                     if month_str not in monthly_data:
                         monthly_data[month_str] = {'div_per_share': 0.0, 'div_total': 0.0, 'end_asset': 0.0, 'end_price': 0.0}
 
-                    # 1. 배당금 확인 (어제까지 보유한 종목 기준)
                     div = processed_data[current_ticker][1][date]
                     if div > 0 and total_shares > 0:
                         div_amount = total_shares * float(div)
@@ -221,19 +216,16 @@ if st.session_state.show_settings:
                             '총자산': float(reserve_cash + available_cash + (total_shares * price))
                         })
 
-                        # 풍차모드인 경우 배당금 액션 직후 무조건 교체 매매 플래그 ON
                         if is_windmill:
                             windmill_swap_flag = True
                         elif div_action_input == "재투자":
                             reinvest_flag = True
 
-                    # 2. 투자금 투입 (정기 매수일)
                     is_invest_day = date in invest_dates_set
                     if is_invest_day:
                         reserve_cash -= installment
                         available_cash += installment
 
-                    # 3. 풍차 매도 (교체 스왑)
                     if windmill_swap_flag:
                         sell_amount = total_shares * price
                         available_cash += sell_amount
@@ -245,15 +237,13 @@ if st.session_state.show_settings:
                         })
                         total_shares = 0
                         
-                        # 타겟 종목 스위칭
                         current_idx = (current_idx + 1) % len(t_tickers)
                         current_ticker = t_tickers[current_idx]
-                        price = processed_data[current_ticker][0][date] # 교체된 종목의 오늘 종가
+                        price = processed_data[current_ticker][0][date] 
                         
                         windmill_swap_flag = False
-                        reinvest_flag = True # 새 종목 매수를 위해 재투자 플래그 ON
+                        reinvest_flag = True 
 
-                    # 4. 매수 실행 (정기 매수 OR 풍차/배당 재투자)
                     if is_invest_day or reinvest_flag:
                         if not pd.isna(price):
                             shares_to_buy = int(available_cash // price)
@@ -275,7 +265,6 @@ if st.session_state.show_settings:
                                 })
                         reinvest_flag = False
                     
-                    # 5. 자산 평가 및 월말평가 기록
                     cur_asset = float(reserve_cash + available_cash + (total_shares * price))
                     
                     if date in eom_dates_set and date != all_trading_dates[-1]:
@@ -297,7 +286,6 @@ if st.session_state.show_settings:
                         })
                         prev_asset = cur_asset
 
-                # 차트 및 최종 평가 처리
                 chart_vals = []
                 last_val = INITIAL_CASH
                 for lbl in chart_labels:
@@ -377,10 +365,10 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         
         .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; min-width: 45px; text-align: center;}}
         .buy {{ background: #ef4444; }} 
-        .sell {{ background: #3b82f6; }} /* 풍차매도 파란색 뱃지 */
+        .sell {{ background: #3b82f6; }} 
         .div {{ background: #10b981; }}
         .withdraw {{ background: #f59e0b; }} 
-        .reinvest {{ background: #8b5cf6; }} /* 풍차매수, 배당재투자 보라색 */
+        .reinvest {{ background: #8b5cf6; }} 
         .eval {{ background: #64748b; }}
         .eval-month {{ background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; }}
         .header-flex {{ display: flex; justify-content: space-between; align-items: center; margin: 25px 0 10px 0; }}
