@@ -85,15 +85,15 @@ if st.session_state.show_settings:
         st.subheader("⚙️ 시뮬레이션 설정")
         col1, col2 = st.columns(2)
         with col1:
-            cash_input = st.text_input("초기 총 투자금 (원)", "10,000,000")
+            cash_input = st.text_input("초기 총 투자금 (원)", "40,000,000") # 기본값 변경
             period_input = st.text_input("백테스트 기간", "2025~2026")
 
         with col2:
-            etf_input = st.text_input("종목 코드 (최대 4개)", "498400, 472150, 475720")
+            etf_input = st.text_input("종목 코드 (최대 4개)", "498400, 472150") # 기본값 변경
             strategy_options = st.multiselect(
                 "분할 매수 방식 (단일 종목 시 적용)",
                 ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
-                default=["거치식 (일괄 매수)", "적립식 (매월)"]
+                default=["거치식 (일괄 매수)"] # 기본값 변경
             )
             
         run_btn = st.button("🚀 배당 재투자 시뮬레이션 실행", type="primary", use_container_width=True)
@@ -154,13 +154,12 @@ if st.session_state.show_settings:
                 
                 reserve_cash, available_cash, total_shares = INITIAL_CASH, 0.0, 0
                 history, summary, asset_by_date = [], [], {}
-                monthly_data = {} # 월별 집계를 위한 딕셔너리
+                monthly_data = {}
                 prev_asset = INITIAL_CASH
                 
                 reinvest_flag = False
 
                 for date, price in prices.items():
-                    # 월별 키 생성 (예: '2026.04')
                     month_str = date.strftime('%Y.%m')
                     if month_str not in monthly_data:
                         monthly_data[month_str] = {'div_per_share': 0.0, 'div_total': 0.0, 'end_asset': 0.0, 'end_price': 0.0}
@@ -197,7 +196,6 @@ if st.session_state.show_settings:
                         div_amount = total_shares * float(divs[date])
                         available_cash += div_amount
                         
-                        # 월별 배당금 누적
                         monthly_data[month_str]['div_per_share'] += float(divs[date])
                         monthly_data[month_str]['div_total'] += div_amount
                         
@@ -210,7 +208,6 @@ if st.session_state.show_settings:
                     
                     cur_asset = float(reserve_cash + available_cash + (total_shares * price))
                     
-                    # 월별 기말 자산 및 기말 단가 업데이트 (매일 덮어쓰면 해당 월의 마지막 날 값이 남게 됨)
                     monthly_data[month_str]['end_asset'] = cur_asset
                     monthly_data[month_str]['end_price'] = float(price)
                     
@@ -243,7 +240,6 @@ if st.session_state.show_settings:
                     '총자산': final_eval_asset
                 })
 
-                # 월별 데이터 리스트로 변환 및 증감 계산
                 monthly_list = []
                 prev_m_asset = INITIAL_CASH
                 for m_str in sorted(monthly_data.keys()):
@@ -263,7 +259,7 @@ if st.session_state.show_settings:
 
                 all_sim_data[t_key] = {
                     'name': target['name'], 'summary': summary, 'history': history,
-                    'monthly_summary': monthly_list, # 월별 요약 추가
+                    'monthly_summary': monthly_list,
                     'chart_values': chart_vals, 'final_asset': final_eval_asset,
                     'total_profit': final_eval_asset - INITIAL_CASH, 'profit_rate': ((final_eval_asset / INITIAL_CASH) - 1) * 100
                 }
