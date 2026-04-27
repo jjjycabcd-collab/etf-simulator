@@ -327,7 +327,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         .withdraw {{ background: #f59e0b; }} 
         .reinvest {{ background: #8b5cf6; }}
         .eval {{ background: #64748b; }}
-        .eval-month {{ background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }} /* 월말평가용 뱃지 스타일 */
+        .eval-month {{ background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }}
         .header-flex {{ display: flex; justify-content: space-between; align-items: center; margin: 25px 0 10px 0; }}
         .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; }}
         .section-icon {{ border-left: 3px solid #3b82f6; padding-left: 8px; }}
@@ -432,7 +432,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                     <h3>${{item.name}}</h3>
                     <div class="card-row"><span>${{assetLabel}}</span><strong>${{fmt(item.final_asset)}}</strong></div>
                     ${{withdrawRow}}
-                    <div class="card-row"><span>${{profitLabel}}</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${fmt(item.total_profit)} (${{item.profit_rate.toFixed(2)}}%)</span></div>
+                    <div class="card-row"><span>${{profitLabel}}</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${{fmt(item.total_profit)}} (${{item.profit_rate.toFixed(2)}}%)</span></div>
                 </div>`;
             }}).join('');
             
