@@ -3,12 +3,13 @@ import pandas as pd
 import re
 import json
 import datetime
+import requests
 import yfinance as yf
 import streamlit as st
 import streamlit.components.v1 as components
 
 # ==========================================
-# 국내 주요 월배당 및 대표 ETF 사전 (검색용 DB)
+# 국내 주요 월배당 및 대표 ETF 사전 (빠른 검색용 DB)
 # ==========================================
 MAJOR_ETFS = {
     "498400": "TIGER 미국배당+7%프리미엄다우존스",
@@ -59,7 +60,6 @@ if 'sim_result_data' not in st.session_state:
 def get_stock_info(code):
     """종목명 가져오기"""
     if not code: return ""
-    # DB에 있으면 DB 이름 먼저 반환
     if code in MAJOR_ETFS:
         return f"{MAJOR_ETFS[code]}({code})"
         
@@ -122,20 +122,40 @@ if st.session_state.show_settings:
     * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일이 도래하면, 당일 종가에 A종목을 매도하고 B종목으로 교차 매수합니다.
     """)
 
-    # 💡 [새로운 기능] 폼 외부에 종목 검색 아코디언 추가 (엔터키 충돌 방지)
+    # 💡 [기능 업그레이드] 네이버 증권 API 연동 실시간 검색 기능
     with st.expander("🔍 종목 코드를 모르시나요? (이름으로 코드 검색하기)", expanded=False):
-        search_kw = st.text_input("찾고 싶은 월배당 ETF나 주식 이름을 입력하세요. (예: 다우존스, 배당, TIGER)", key="search_input")
+        search_kw = st.text_input("찾고 싶은 국내 주식이나 ETF 이름을 입력하세요. (예: 삼성전자, 다우존스)", key="search_input")
         if search_kw:
-            # 공백 제거 후 비교하여 검색 정확도 향상
             search_kw_clean = search_kw.replace(" ", "").lower()
-            results = {code: name for code, name in MAJOR_ETFS.items() if search_kw_clean in name.replace(" ", "").lower()}
             
-            if results:
+            # 1. 내장 DB 우선 검색 (속도 향상용)
+            final_results = {code: name for code, name in MAJOR_ETFS.items() if search_kw_clean in name.replace(" ", "").lower()}
+            
+            # 2. 네이버 증권 자동완성 API 연동 (모든 국내 주식/ETF 검색)
+            try:
+                # 네이버 금융 자동완성 API 호출 (st=111: 국내주식/ETF/ETN)
+                url = f"https://ac.finance.naver.com/ac?q={search_kw}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
+                res = requests.get(url, timeout=3)
+                data = res.json()
+                
+                if data.get('items') and len(data['items']) > 0:
+                    for item in data['items'][0]:
+                        if len(item) >= 2:
+                            api_code = item[0]
+                            api_name = item[1]
+                            # DB에 없는 새로운 종목만 추가
+                            if api_code not in final_results:
+                                final_results[api_code] = api_name
+            except Exception as e:
+                pass # API 호출 실패 시 에러 무시하고 내장 DB 결과만 표시
+            
+            # 결과 출력
+            if final_results:
                 st.markdown("##### 💡 검색 결과 (코드를 복사하여 아래 입력창에 붙여넣으세요)")
-                for code, name in results.items():
+                for code, name in final_results.items():
                     st.markdown(f"- **{name}** : `{code}`")
             else:
-                st.warning("내장된 주요 월배당 ETF 목록에 검색 결과가 없습니다. 네이버 증권 등에서 코드를 직접 확인해 주세요.")
+                st.warning("검색 결과가 없습니다. 이름을 다시 확인해 주세요.")
 
     with st.container(border=True):
         st.subheader("⚙️ 테스트 환경")
@@ -148,7 +168,6 @@ if st.session_state.show_settings:
                 div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True)
 
             with col2:
-                # 라벨에 위 검색창을 활용하라는 안내 문구 추가
                 etf_input = st.text_input("종목 코드 (최대 4개, 위 🔍검색창 활용)", "498400, 472150, 498400 + 472150")
                 strategy_options = st.multiselect(
                     "분할 매수 방식 (단일 종목 시 적용)",
