@@ -156,7 +156,7 @@ if st.session_state.show_settings:
                 
                 reserve_cash, available_cash, total_shares = INITIAL_CASH, 0.0, 0
                 total_withdrawn = 0.0 
-                total_dividend = 0.0 # 총 배당금 누적용 변수 추가
+                total_dividend = 0.0 
                 
                 history, summary, asset_by_date = [], [], {}
                 monthly_data = {}
@@ -203,7 +203,7 @@ if st.session_state.show_settings:
                         
                         monthly_data[month_str]['div_per_share'] += float(divs[date])
                         monthly_data[month_str]['div_total'] += div_amount
-                        total_dividend += div_amount # 총 배당금 누적
+                        total_dividend += div_amount 
                         
                         if div_action_input == "재투자":
                             available_cash += div_amount
@@ -286,8 +286,8 @@ if st.session_state.show_settings:
                     'monthly_summary': monthly_list,
                     'chart_values': chart_vals, 'final_asset': final_eval_asset,
                     'div_action': div_action_input,
-                    'initial_cash': INITIAL_CASH, # 초기 투자금 저장
-                    'total_dividend': total_dividend, # 총 배당금 저장
+                    'initial_cash': INITIAL_CASH, 
+                    'total_dividend': total_dividend, 
                     'total_withdrawn': total_withdrawn,
                     'total_profit': real_total_asset - INITIAL_CASH, 
                     'profit_rate': ((real_total_asset / INITIAL_CASH) - 1) * 100
@@ -324,13 +324,18 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
         th {{ background: #f8fafc; padding: 12px 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600; border-top: 1px solid #e2e8f0; }}
         td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; }}
+        
+        /* 💡 짝수 행 음영 처리 (Zebra Striping) 및 Hover 효과 적용 */
+        tbody tr:nth-child(even) {{ background-color: #f8fafc; }}
+        tbody tr:hover {{ background-color: #f1f5f9; transition: background-color 0.2s ease; }}
+        
         .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; }}
         .buy {{ background: #ef4444; }} 
         .div {{ background: #10b981; }}
         .withdraw {{ background: #f59e0b; }} 
         .reinvest {{ background: #8b5cf6; }}
         .eval {{ background: #64748b; }}
-        .eval-month {{ background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }}
+        .eval-month {{ background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; }}
         .header-flex {{ display: flex; justify-content: space-between; align-items: center; margin: 25px 0 10px 0; }}
         .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; }}
         .section-icon {{ border-left: 3px solid #3b82f6; padding-left: 8px; }}
@@ -419,7 +424,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             const k = sel.value;
             const d = data[k];
             
-            // 요약 카드 렌더링 (초기 투자금, 총 배당금 항목 추가)
+            // 요약 카드 렌더링 (오류 수정됨)
             document.getElementById('stat-cards').innerHTML = keys.map(key => {{
                 const item = data[key];
                 const isWithdrawal = item.div_action === '인출(생활비)';
