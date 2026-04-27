@@ -110,18 +110,22 @@ if st.session_state.show_settings:
             except:
                 start_dt, end_dt = pd.to_datetime("2025-01-01"), pd.to_datetime("2026-12-31")
 
-            # 타겟 파싱 (단일 종목 vs A+B 형태)
+            # 타겟 파싱 및 compare_keys 초기화 수정 부분
             raw_target_strs = [t.strip().upper() for t in etf_input.split(',') if t.strip()][:4]
             targets = []
+            compare_keys = [] 
             
             if len(raw_target_strs) == 1 and '+' not in raw_target_strs[0]:
-                compare_keys = strategy_options if strategy_options else ["거치식 (일괄 매수)"]
-                for strat in compare_keys:
-                    targets.append({'key': f"{raw_target_strs[0]}_{strat}", 'ticker': raw_target_strs[0], 'strategy': strat, 'name': f"{get_stock_info(raw_target_strs[0])} ({strat})"})
+                strats = strategy_options if strategy_options else ["거치식 (일괄 매수)"]
+                for strat in strats:
+                    key = f"{raw_target_strs[0]}_{strat}"
+                    targets.append({'key': key, 'ticker': raw_target_strs[0], 'strategy': strat, 'name': f"{get_stock_info(raw_target_strs[0])} ({strat})"})
+                    compare_keys.append(key)
             else:
                 for t in raw_target_strs:
                     name = f"배당풍차 ({t})" if '+' in t else f"{get_stock_info(t)}"
                     targets.append({'key': t, 'ticker': t, 'strategy': "거치식 (일괄 매수)", 'name': name})
+                    compare_keys.append(t)
 
             # 전체 필요 종목(티커) 단위로 데이터 수집
             all_tickers_needed = set()
