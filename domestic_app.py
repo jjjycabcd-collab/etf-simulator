@@ -183,7 +183,7 @@ if st.session_state.show_settings:
         with st.form("settings_form"):
             col1, col2 = st.columns(2)
             with col1:
-                cash_input = st.text_input("초기 총 투자금 (원)", "50,000,000")
+                cash_input = st.text_input("초기 총 투자금 (원)", "5,000,000")
                 period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", "2025.1~2026.4")
                 div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True)
 
