@@ -3,6 +3,7 @@ import pandas as pd
 import re
 import json
 import datetime
+import requests  # 💡 네이버 API 호출을 위해 추가
 import yfinance as yf
 import streamlit as st
 import streamlit.components.v1 as components
@@ -27,6 +28,20 @@ if 'sim_result_data' not in st.session_state:
 def get_stock_info(code):
     """종목명 가져오기"""
     if not code: return ""
+    
+    # 💡 1. 네이버 증권 API를 통해 코드로 이름 조회 시도
+    try:
+        url = f"https://ac.finance.naver.com/ac?q={code}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
+        res = requests.get(url, timeout=3)
+        data = res.json()
+        if data.get('items') and len(data['items']) > 0:
+            for item in data['items'][0]:
+                if item[0] == code:
+                    return f"{item[1]}({code})"
+    except:
+        pass # API 실패 시 아래 yfinance 로직으로 폴백
+
+    # 💡 2. API 실패 또는 해외 주식인 경우 yfinance 사용
     try:
         check_code = f"{code}.KS" if code.isdigit() else code
         ticker = yf.Ticker(check_code)
@@ -89,6 +104,33 @@ if st.session_state.show_settings:
     * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일(배당 수취 확정)이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수하여 배당 주기를 극대화합니다.
     """)
 
+    # 💡 네이버 증권 API 실시간 검색 (최대 10개 제한)
+    with st.expander("🔍 종목 코드를 모르시나요? (이름으로 코드 검색하기)", expanded=False):
+        search_kw = st.text_input("찾고 싶은 국내 주식이나 ETF 이름을 입력하세요. (예: 삼성전자, 배당다우존스)", key="search_input")
+        if search_kw:
+            final_results = {}
+            try:
+                # 네이버 금융 자동완성 API 호출 (st=111: 국내주식/ETF/ETN)
+                url = f"https://ac.finance.naver.com/ac?q={search_kw}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
+                res = requests.get(url, timeout=3)
+                data = res.json()
+                
+                if data.get('items') and len(data['items']) > 0:
+                    # 결과 중 최대 10개까지만 슬라이싱해서 가져옴
+                    for item in data['items'][0][:10]:
+                        if len(item) >= 2:
+                            final_results[item[0]] = item[1]
+            except Exception as e:
+                st.error("네이버 증권 API 검색 중 오류가 발생했습니다.")
+            
+            # 결과 출력
+            if final_results:
+                st.markdown("##### 💡 검색 결과 (코드를 복사하여 아래 입력창에 붙여넣으세요)")
+                for code, name in final_results.items():
+                    st.markdown(f"- **{name}** : `{code}`")
+            else:
+                st.warning("검색 결과가 없습니다. 이름을 다시 확인해 주세요.")
+
     with st.container(border=True):
         st.subheader("⚙️ 테스트 환경")
         
@@ -101,7 +143,7 @@ if st.session_state.show_settings:
                 div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True)
 
             with col2:
-                etf_input = st.text_input("종목 코드 (최대 4개)", "498400, 472150, 498400 + 472150")
+                etf_input = st.text_input("종목 코드 (최대 4개, 위 🔍검색창 활용)", "498400, 472150, 498400 + 472150")
                 strategy_options = st.multiselect(
                     "분할 매수 방식 (단일 종목 시 적용)",
                     ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
