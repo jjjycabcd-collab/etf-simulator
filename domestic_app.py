@@ -115,14 +115,6 @@ if st.session_state.run_clicked and not st.session_state.show_settings:
 if st.session_state.show_settings:
     st.title("🇰🇷 월배당 ETF 백테스트")
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    col_nav1, col_nav2 = st.columns(2)
-    with col_nav1:
-        st.button("🇰🇷 국내 월배당 ETF (현재 페이지)", type="primary", use_container_width=True, disabled=True)
-    with col_nav2:
-        st.link_button("🌎 해외 ETF 시뮬레이터 이동", "https://etf-simulator-qqq.streamlit.app/", use_container_width=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-
     st.info("""
     💡 **참고사항 (데이터 한계 및 기준)**
     * **순수 종가 사용:** 본 시뮬레이터는 배당 수익 이중 계산 방지를 위해 수정주가(Adj Close)가 아닌 **실제 거래된 일별 종가(Close)**를 기준으로 단가를 계산합니다.
