@@ -132,7 +132,6 @@ if st.session_state.show_settings:
 
     # 💡 종목 코드 검색 아코디언
     with st.expander("🔍 종목 코드를 모르시나요? (이름으로 코드 검색하기)", expanded=False):
-        # 안내 문구 수정: (예: 삼성전자, 커버드콜)
         search_kw = st.text_input("찾고 싶은 국내 주식이나 ETF 이름을 입력하세요. (예: 삼성전자, 커버드콜)", key="search_input")
         if search_kw:
             search_kw_clean = search_kw.replace(" ", "").lower()
@@ -189,7 +188,8 @@ if st.session_state.show_settings:
                 div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True)
 
             with col2:
-                etf_input = st.text_input("종목 코드 (최대 4개, 위 🔍검색창 활용)", "498400, 472150, QQQ, SCHD")
+                # 💡 기본값 수정 완료
+                etf_input = st.text_input("종목 코드 (최대 4개, 위 🔍검색창 활용)", "498400, 472150, 498400 + 472150")
                 strategy_options = st.multiselect(
                     "분할 매수 방식 (단일 종목 시 적용)",
                     ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
