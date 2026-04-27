@@ -91,35 +91,53 @@ if st.session_state.show_settings:
 
     with st.container(border=True):
         st.subheader("⚙️ 테스트 환경")
-        col1, col2 = st.columns(2)
-        with col1:
-            cash_input = st.text_input("초기 총 투자금 (원)", "40,000,000")
-            period_input = st.text_input("백테스트 기간", "2025~2026")
-            div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True)
+        
+        # 💡 form을 사용하여 Enter 키 입력 시 실행되도록 변경
+        with st.form("settings_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                cash_input = st.text_input("초기 총 투자금 (원)", "50,000,000")
+                period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", "2025.1~2026.4")
+                div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True)
 
-        with col2:
-            etf_input = st.text_input("종목 코드 (최대 4개)", "498400, 472150, 498400 + 472150")
-            strategy_options = st.multiselect(
-                "분할 매수 방식 (단일 종목 시 적용)",
-                ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
-                default=["거치식 (일괄 매수)"]
-            )
-            
-        run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
+            with col2:
+                etf_input = st.text_input("종목 코드 (최대 4개)", "498400, 472150, 498400 + 472150")
+                strategy_options = st.multiselect(
+                    "분할 매수 방식 (단일 종목 시 적용)",
+                    ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
+                    default=["거치식 (일괄 매수)"]
+                )
+                
+            run_btn = st.form_submit_button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
 
     if run_btn:
         with st.spinner('배당풍차 및 주가 데이터를 통합 분석 중...'):
             INITIAL_CASH = float(re.sub(r'[^0-9.]', '', cash_input))
+            
+            # 💡 다양한 날짜 형식(YYYY 또는 YYYY.MM)을 지원하도록 파싱 로직 개선
             try:
                 if '~' in period_input:
                     s_str, e_str = period_input.split('~')
-                    start_dt = pd.to_datetime(s_str.strip() if '.' in s_str else f"{s_str.strip()}-01-01")
-                    end_dt = pd.to_datetime(e_str.strip() if '.' in e_str else f"{e_str.strip()}-12-31")
+                    
+                    if '.' in s_str:
+                        start_dt = pd.to_datetime(s_str.strip().replace('.', '-'))
+                    else:
+                        start_dt = pd.to_datetime(f"{s_str.strip()}-01-01")
+                        
+                    if '.' in e_str:
+                        # 지정한 달의 마지막 날까지 포함
+                        end_dt = pd.to_datetime(e_str.strip().replace('.', '-')) + pd.offsets.MonthEnd(0)
+                    else:
+                        end_dt = pd.to_datetime(f"{e_str.strip()}-12-31")
                 else:
-                    start_dt = pd.to_datetime(f"{period_input.strip()}-01-01")
-                    end_dt = pd.to_datetime(f"{period_input.strip()}-12-31")
+                    if '.' in period_input:
+                        start_dt = pd.to_datetime(period_input.strip().replace('.', '-'))
+                        end_dt = start_dt + pd.offsets.MonthEnd(0)
+                    else:
+                        start_dt = pd.to_datetime(f"{period_input.strip()}-01-01")
+                        end_dt = pd.to_datetime(f"{period_input.strip()}-12-31")
             except:
-                start_dt, end_dt = pd.to_datetime("2025-01-01"), pd.to_datetime("2026-12-31")
+                start_dt, end_dt = pd.to_datetime("2025-01-01"), pd.to_datetime("2026-04-30")
 
             raw_target_strs = [t.strip().upper() for t in etf_input.split(',') if t.strip()][:4]
             targets = []
