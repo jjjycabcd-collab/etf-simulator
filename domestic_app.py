@@ -40,22 +40,26 @@ def get_stock_info(code):
         return code.upper()
 
 def fetch_prices_and_dividends(code, start_date, end_date):
-    """가격 및 배당 데이터 수집"""
+    """가격(순수 종가) 및 배당 데이터 수집"""
     try:
         ticker_code = f"{code}.KS" if code.isdigit() else code
         ticker = yf.Ticker(ticker_code)
-        df = ticker.history(start=start_date, end=end_date)
+        
+        # 💡 핵심 수정: auto_adjust=False를 주어 수정주가가 아닌 실제 종가(Close)를 가져옴
+        df = ticker.history(start=start_date, end=end_date, auto_adjust=False)
         
         # 코스피에 없으면 코스닥 시도
         if df.empty and code.isdigit():
             ticker_code = f"{code}.KQ"
             ticker = yf.Ticker(ticker_code)
-            df = ticker.history(start=start_date, end=end_date)
+            df = ticker.history(start=start_date, end=end_date, auto_adjust=False)
             
         if df.empty: 
             return pd.Series(dtype=float), pd.Series(dtype=float)
             
         df.index = pd.to_datetime(df.index).tz_localize(None)
+        
+        # 순수 종가(Close)와 배당금(Dividends) 데이터 반환
         return df['Close'].dropna(), df['Dividends'].replace(0, pd.NA).dropna()
     except:
         return pd.Series(dtype=float), pd.Series(dtype=float)
@@ -66,10 +70,10 @@ def fetch_prices_and_dividends(code, start_date, end_date):
 st.title("🇰🇷 국내 주식 배당 재투자 시뮬레이터")
 
 st.info("""
-💡 **참고사항 (데이터 한계)**
+💡 **참고사항 (데이터 한계 및 기준)**
 
-yfinance에서 제공하는 배당 기준일은 실제 '배당금 입금일(지급일)'이 아닌 **'배당락일(Ex-Dividend Date)'**입니다. 
-실제 국내 상장 ETF는 배당락일 이후 2~3영업일 뒤에 계좌로 입금되지만, 본 시뮬레이터에서는 제공되는 데이터의 한계상 **배당락일 다음 거래일에 즉시 재투자**되는 것으로 백테스트가 진행됩니다.
+* **순수 종가 사용:** 본 시뮬레이터는 배당 수익 이중 계산 방지를 위해 수정주가(Adj Close)가 아닌 **실제 거래된 일별 종가(Close)**를 기준으로 단가를 계산합니다.
+* **배당 재투자 시점:** yfinance에서 제공하는 배당 기준일은 실제 입금일이 아닌 **'배당락일(Ex-Dividend Date)'**입니다. 실제 ETF는 배당락일 2~3영업일 뒤에 입금되지만, 본 시뮬레이터에서는 **배당락일 다음 거래일에 즉시 전액 재투자**되는 것으로 백테스트가 진행됩니다.
 """)
 
 if st.session_state.run_clicked and not st.session_state.show_settings:
@@ -123,7 +127,6 @@ if st.session_state.show_settings:
             all_sim_data = {}
             global_dates = set()
             
-            # 데이터 수집 및 공통 날짜 생성
             target_raw_data = {}
             for target in targets:
                 prices, divs = fetch_prices_and_dividends(target['ticker'], start_dt, end_dt)
@@ -141,7 +144,6 @@ if st.session_state.show_settings:
                 prices, divs = target_raw_data[t_key]
                 strat = target['strategy']
                 
-                # 매수일 계산
                 if strat == "거치식 (일괄 매수)": invest_dates = [prices.index[0]]
                 elif strat == "적립식 (매일)": invest_dates = prices.index
                 elif strat == "적립식 (매주)": invest_dates = prices.groupby([prices.index.isocalendar().year, prices.index.isocalendar().week]).head(1).index
@@ -212,14 +214,10 @@ if st.session_state.show_settings:
                     if lbl in asset_by_date: last_val = asset_by_date[lbl]
                     chart_vals.append(last_val)
 
-                # ==========================================
-                # 추가: 차트와 테이블 금액 동기화를 위한 최종 평가 내역 추가
-                # ==========================================
                 last_date = prices.index[-1]
                 last_price = float(prices.iloc[-1])
                 final_eval_asset = float(reserve_cash + available_cash + (total_shares * last_price))
                 
-                # 마지막 거래일 기준으로 상세 내역에 강제로 기록
                 history.append({
                     '날짜': last_date.strftime('%Y/%m/%d'), 
                     '구분': '최종평가', 
@@ -271,7 +269,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         .buy {{ background: #ef4444; }} 
         .div {{ background: #10b981; }}
         .reinvest {{ background: #8b5cf6; }}
-        .eval {{ background: #64748b; }} /* 최종평가 전용 뱃지 색상 추가 */
+        .eval {{ background: #64748b; }}
         .header-flex {{ display: flex; justify-content: space-between; align-items: center; margin: 25px 0 10px 0; }}
         .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; }}
     </style>
