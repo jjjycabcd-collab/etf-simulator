@@ -3,7 +3,7 @@ import pandas as pd
 import re
 import json
 import datetime
-import requests  # 💡 네이버 API 호출을 위해 추가
+import requests
 import yfinance as yf
 import streamlit as st
 import streamlit.components.v1 as components
@@ -29,10 +29,11 @@ def get_stock_info(code):
     """종목명 가져오기"""
     if not code: return ""
     
-    # 💡 1. 네이버 증권 API를 통해 코드로 이름 조회 시도
+    # 💡 1. 네이버 증권 API를 통해 코드로 이름 조회 시도 (User-Agent 헤더 추가)
     try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         url = f"https://ac.finance.naver.com/ac?q={code}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
-        res = requests.get(url, timeout=3)
+        res = requests.get(url, headers=headers, timeout=3)
         data = res.json()
         if data.get('items') and len(data['items']) > 0:
             for item in data['items'][0]:
@@ -41,7 +42,7 @@ def get_stock_info(code):
     except:
         pass # API 실패 시 아래 yfinance 로직으로 폴백
 
-    # 💡 2. API 실패 또는 해외 주식인 경우 yfinance 사용
+    # 2. API 실패 또는 해외 주식인 경우 yfinance 사용
     try:
         check_code = f"{code}.KS" if code.isdigit() else code
         ticker = yf.Ticker(check_code)
@@ -104,26 +105,25 @@ if st.session_state.show_settings:
     * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일(배당 수취 확정)이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수하여 배당 주기를 극대화합니다.
     """)
 
-    # 💡 네이버 증권 API 실시간 검색 (최대 10개 제한)
+    # 💡 네이버 증권 API 실시간 검색 (최대 10개 제한 + 브라우저 헤더 추가)
     with st.expander("🔍 종목 코드를 모르시나요? (이름으로 코드 검색하기)", expanded=False):
         search_kw = st.text_input("찾고 싶은 국내 주식이나 ETF 이름을 입력하세요. (예: 삼성전자, 배당다우존스)", key="search_input")
         if search_kw:
             final_results = {}
             try:
-                # 네이버 금융 자동완성 API 호출 (st=111: 국내주식/ETF/ETN)
+                # 봇 차단 방지용 크롬 브라우저 헤더 추가
+                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
                 url = f"https://ac.finance.naver.com/ac?q={search_kw}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
-                res = requests.get(url, timeout=3)
+                res = requests.get(url, headers=headers, timeout=3)
                 data = res.json()
                 
                 if data.get('items') and len(data['items']) > 0:
-                    # 결과 중 최대 10개까지만 슬라이싱해서 가져옴
                     for item in data['items'][0][:10]:
                         if len(item) >= 2:
                             final_results[item[0]] = item[1]
             except Exception as e:
-                st.error("네이버 증권 API 검색 중 오류가 발생했습니다.")
+                st.error(f"네이버 증권 API 검색 중 오류가 발생했습니다: {e}")
             
-            # 결과 출력
             if final_results:
                 st.markdown("##### 💡 검색 결과 (코드를 복사하여 아래 입력창에 붙여넣으세요)")
                 for code, name in final_results.items():
@@ -156,7 +156,6 @@ if st.session_state.show_settings:
         with st.spinner('배당풍차 및 주가 데이터를 통합 분석 중...'):
             INITIAL_CASH = float(re.sub(r'[^0-9.]', '', cash_input))
             
-            # 💡 다양한 날짜 형식(YYYY 또는 YYYY.MM)을 지원하도록 파싱 로직 개선
             try:
                 if '~' in period_input:
                     s_str, e_str = period_input.split('~')
@@ -167,7 +166,6 @@ if st.session_state.show_settings:
                         start_dt = pd.to_datetime(f"{s_str.strip()}-01-01")
                         
                     if '.' in e_str:
-                        # 지정한 달의 마지막 날까지 포함
                         end_dt = pd.to_datetime(e_str.strip().replace('.', '-')) + pd.offsets.MonthEnd(0)
                     else:
                         end_dt = pd.to_datetime(f"{e_str.strip()}-12-31")
