@@ -8,6 +8,38 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 # ==========================================
+# 국내 주요 월배당 및 대표 ETF 사전 (검색용 DB)
+# ==========================================
+MAJOR_ETFS = {
+    "498400": "TIGER 미국배당+7%프리미엄다우존스",
+    "472150": "TIGER 은행고배당플러스TOP10",
+    "448540": "ACE 미국배당다우존스",
+    "458730": "TIGER 미국배당다우존스",
+    "436110": "SOL 미국배당다우존스",
+    "461020": "TIGER 미국배당+3%프리미엄다우존스",
+    "469090": "TIGER 미국테크TOP10+10%프리미엄다우존스",
+    "489010": "KODEX 미국배당+10%프리미엄다우존스",
+    "480460": "KODEX 미국AI테크TOP10+15%프리미엄",
+    "476060": "KODEX 테슬라인컴프리미엄채권혼합액티브",
+    "466750": "ACE 미국빅테크7+15%프리미엄다우존스(합성)",
+    "452360": "SOL 미국배당다우존스(환노출)",
+    "446720": "KODEX 미국배당프리미엄액티브",
+    "481060": "ACE 미국500+15%프리미엄다우존스(합성)",
+    "481050": "ACE 미국반도체15%프리미엄다우존스(합성)",
+    "495810": "TIGER 미국S&P500+10%프리미엄다우존스",
+    "474220": "KODEX 미국공모주IPO",
+    "466940": "KODEX 배당가치증권",
+    "069500": "KODEX 200",
+    "122630": "KODEX 레버리지",
+    "114800": "KODEX 인버스",
+    "379800": "KODEX 미국S&P500TR",
+    "360200": "KBSTAR 미국S&P500",
+    "133690": "TIGER 미국나스닥100",
+    "305080": "TIGER 미국배당100",
+    "161510": "ARIRANG 고배당주"
+}
+
+# ==========================================
 # 웹 페이지 기본 설정 및 상태 초기화
 # ==========================================
 st.set_page_config(page_title="월배당 ETF 백테스트", layout="wide")
@@ -27,6 +59,10 @@ if 'sim_result_data' not in st.session_state:
 def get_stock_info(code):
     """종목명 가져오기"""
     if not code: return ""
+    # DB에 있으면 DB 이름 먼저 반환
+    if code in MAJOR_ETFS:
+        return f"{MAJOR_ETFS[code]}({code})"
+        
     try:
         check_code = f"{code}.KS" if code.isdigit() else code
         ticker = yf.Ticker(check_code)
@@ -63,7 +99,6 @@ def fetch_prices_and_dividends(code, start_date, end_date):
 # UI 영역
 # ==========================================
 
-# 💡 결과 화면에서는 상단 메뉴들을 감추고, 다시 설정 버튼만 표시
 if st.session_state.run_clicked and not st.session_state.show_settings:
     if st.button("⚙️ 테스트 환경 다시 설정하기", use_container_width=True):
         st.session_state.show_settings = True
@@ -72,7 +107,6 @@ if st.session_state.run_clicked and not st.session_state.show_settings:
 if st.session_state.show_settings:
     st.title("🇰🇷 월배당 ETF 백테스트")
 
-    # 💡 상단 네비게이션 (국내/해외 링크 분기)
     st.markdown("<br>", unsafe_allow_html=True)
     col_nav1, col_nav2 = st.columns(2)
     with col_nav1:
@@ -83,16 +117,29 @@ if st.session_state.show_settings:
 
     st.info("""
     💡 **참고사항 (데이터 한계 및 기준)**
-
     * **순수 종가 사용:** 본 시뮬레이터는 배당 수익 이중 계산 방지를 위해 수정주가(Adj Close)가 아닌 **실제 거래된 일별 종가(Close)**를 기준으로 단가를 계산합니다.
     * **배당 기준 시점:** yfinance에서 제공하는 배당 기준일은 실제 입금일이 아닌 **'배당락일(Ex-Dividend Date)'**입니다. 재투자 모드 시 배당락일 당일 종가에 전액 재투자되는 것으로 백테스트가 진행됩니다.
-    * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일(배당 수취 확정)이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수하여 배당 주기를 극대화합니다.
+    * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일이 도래하면, 당일 종가에 A종목을 매도하고 B종목으로 교차 매수합니다.
     """)
+
+    # 💡 [새로운 기능] 폼 외부에 종목 검색 아코디언 추가 (엔터키 충돌 방지)
+    with st.expander("🔍 종목 코드를 모르시나요? (이름으로 코드 검색하기)", expanded=False):
+        search_kw = st.text_input("찾고 싶은 월배당 ETF나 주식 이름을 입력하세요. (예: 다우존스, 배당, TIGER)", key="search_input")
+        if search_kw:
+            # 공백 제거 후 비교하여 검색 정확도 향상
+            search_kw_clean = search_kw.replace(" ", "").lower()
+            results = {code: name for code, name in MAJOR_ETFS.items() if search_kw_clean in name.replace(" ", "").lower()}
+            
+            if results:
+                st.markdown("##### 💡 검색 결과 (코드를 복사하여 아래 입력창에 붙여넣으세요)")
+                for code, name in results.items():
+                    st.markdown(f"- **{name}** : `{code}`")
+            else:
+                st.warning("내장된 주요 월배당 ETF 목록에 검색 결과가 없습니다. 네이버 증권 등에서 코드를 직접 확인해 주세요.")
 
     with st.container(border=True):
         st.subheader("⚙️ 테스트 환경")
         
-        # 💡 form을 사용하여 Enter 키 입력 시 실행되도록 변경
         with st.form("settings_form"):
             col1, col2 = st.columns(2)
             with col1:
@@ -101,7 +148,8 @@ if st.session_state.show_settings:
                 div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True)
 
             with col2:
-                etf_input = st.text_input("종목 코드 (최대 4개)", "498400, 472150, 498400 + 472150")
+                # 라벨에 위 검색창을 활용하라는 안내 문구 추가
+                etf_input = st.text_input("종목 코드 (최대 4개, 위 🔍검색창 활용)", "498400, 472150, 498400 + 472150")
                 strategy_options = st.multiselect(
                     "분할 매수 방식 (단일 종목 시 적용)",
                     ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
@@ -114,7 +162,6 @@ if st.session_state.show_settings:
         with st.spinner('배당풍차 및 주가 데이터를 통합 분석 중...'):
             INITIAL_CASH = float(re.sub(r'[^0-9.]', '', cash_input))
             
-            # 💡 다양한 날짜 형식(YYYY 또는 YYYY.MM)을 지원하도록 파싱 로직 개선
             try:
                 if '~' in period_input:
                     s_str, e_str = period_input.split('~')
@@ -125,7 +172,6 @@ if st.session_state.show_settings:
                         start_dt = pd.to_datetime(f"{s_str.strip()}-01-01")
                         
                     if '.' in e_str:
-                        # 지정한 달의 마지막 날까지 포함
                         end_dt = pd.to_datetime(e_str.strip().replace('.', '-')) + pd.offsets.MonthEnd(0)
                     else:
                         end_dt = pd.to_datetime(f"{e_str.strip()}-12-31")
@@ -377,7 +423,6 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         th {{ background: #f8fafc; padding: 12px 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600; border-top: 1px solid #e2e8f0; }}
         td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; }}
         
-        /* 짝수 행 음영 처리 및 Hover */
         tbody tr:nth-child(even) {{ background-color: #f8fafc; }}
         tbody tr:hover {{ background-color: #f1f5f9; transition: background-color 0.2s ease; }}
         
@@ -466,7 +511,6 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             const k = sel.value;
             const d = data[k];
             
-            // 요약 카드 렌더링
             document.getElementById('stat-cards').innerHTML = keys.map(key => {{
                 const item = data[key];
                 const isWithdrawal = item.div_action === '인출(생활비)';
@@ -487,7 +531,6 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                 </div>`;
             }}).join('');
             
-            // 월별 요약 테이블 렌더링
             let monthlyData = d.monthly_summary.slice();
             if (document.getElementById('sort-select-monthly').value === 'desc') monthlyData.reverse(); 
             
@@ -502,7 +545,6 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                 </tr>
             `).join('');
             
-            // 상세 거래 내역 테이블 렌더링
             let historyData = d.history.slice();
             if (document.getElementById('sort-select-history').value === 'desc') historyData.reverse(); 
             
