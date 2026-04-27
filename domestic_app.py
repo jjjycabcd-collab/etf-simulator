@@ -45,7 +45,7 @@ def fetch_prices_and_dividends(code, start_date, end_date):
         ticker_code = f"{code}.KS" if code.isdigit() else code
         ticker = yf.Ticker(ticker_code)
         
-        # 💡 핵심 수정: auto_adjust=False를 주어 수정주가가 아닌 실제 종가(Close)를 가져옴
+        # 수정주가가 아닌 실제 종가(Close) 수집
         df = ticker.history(start=start_date, end=end_date, auto_adjust=False)
         
         # 코스피에 없으면 코스닥 시도
@@ -59,7 +59,6 @@ def fetch_prices_and_dividends(code, start_date, end_date):
             
         df.index = pd.to_datetime(df.index).tz_localize(None)
         
-        # 순수 종가(Close)와 배당금(Dividends) 데이터 반환
         return df['Close'].dropna(), df['Dividends'].replace(0, pd.NA).dropna()
     except:
         return pd.Series(dtype=float), pd.Series(dtype=float)
@@ -155,11 +154,17 @@ if st.session_state.show_settings:
                 
                 reserve_cash, available_cash, total_shares = INITIAL_CASH, 0.0, 0
                 history, summary, asset_by_date = [], [], {}
+                monthly_data = {} # 월별 집계를 위한 딕셔너리
                 prev_asset = INITIAL_CASH
                 
                 reinvest_flag = False
 
                 for date, price in prices.items():
+                    # 월별 키 생성 (예: '2026.04')
+                    month_str = date.strftime('%Y.%m')
+                    if month_str not in monthly_data:
+                        monthly_data[month_str] = {'div_per_share': 0.0, 'div_total': 0.0, 'end_asset': 0.0, 'end_price': 0.0}
+
                     is_invest_day = date in invest_dates_set
                     
                     if is_invest_day:
@@ -191,6 +196,11 @@ if st.session_state.show_settings:
                     if date in div_dates_set and total_shares > 0:
                         div_amount = total_shares * float(divs[date])
                         available_cash += div_amount
+                        
+                        # 월별 배당금 누적
+                        monthly_data[month_str]['div_per_share'] += float(divs[date])
+                        monthly_data[month_str]['div_total'] += div_amount
+                        
                         history.append({
                             '날짜': date.strftime('%Y/%m/%d'), '구분': '배당금', '단가': float(divs[date]),
                             '수량': int(total_shares), '거래금액': div_amount, '현금잔고': float(reserve_cash + available_cash),
@@ -198,9 +208,14 @@ if st.session_state.show_settings:
                         })
                         reinvest_flag = True
                     
+                    cur_asset = float(reserve_cash + available_cash + (total_shares * price))
+                    
+                    # 월별 기말 자산 및 기말 단가 업데이트 (매일 덮어쓰면 해당 월의 마지막 날 값이 남게 됨)
+                    monthly_data[month_str]['end_asset'] = cur_asset
+                    monthly_data[month_str]['end_price'] = float(price)
+                    
                     label = date.strftime('%Y/%m/%d')
                     if label in chart_labels:
-                        cur_asset = float(reserve_cash + available_cash + (total_shares * price))
                         asset_by_date[label] = cur_asset
                         summary.append({
                             '기간': label, '기말단가': float(price), '기말자산': cur_asset,
@@ -228,8 +243,27 @@ if st.session_state.show_settings:
                     '총자산': final_eval_asset
                 })
 
+                # 월별 데이터 리스트로 변환 및 증감 계산
+                monthly_list = []
+                prev_m_asset = INITIAL_CASH
+                for m_str in sorted(monthly_data.keys()):
+                    m_data = monthly_data[m_str]
+                    div_yield = (m_data['div_per_share'] / m_data['end_price'] * 100) if m_data['end_price'] > 0 else 0.0
+                    change = m_data['end_asset'] - prev_m_asset
+                    
+                    monthly_list.append({
+                        '기간': m_str,
+                        '주당배당': m_data['div_per_share'],
+                        '배당률': div_yield,
+                        '배당합계': m_data['div_total'],
+                        '기말자산': m_data['end_asset'],
+                        '증감': change
+                    })
+                    prev_m_asset = m_data['end_asset']
+
                 all_sim_data[t_key] = {
                     'name': target['name'], 'summary': summary, 'history': history,
+                    'monthly_summary': monthly_list, # 월별 요약 추가
                     'chart_values': chart_vals, 'final_asset': final_eval_asset,
                     'total_profit': final_eval_asset - INITIAL_CASH, 'profit_rate': ((final_eval_asset / INITIAL_CASH) - 1) * 100
                 }
@@ -261,9 +295,9 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         .card h3 {{ font-size: 13px; margin: 0 0 10px 0; }}
         .card-row {{ display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 5px; }}
         .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 350px; margin-bottom: 20px; }}
-        .table-wrapper {{ overflow-x: auto; background: white; border-radius: 10px; margin-bottom: 20px; }}
+        .table-wrapper {{ overflow-x: auto; background: white; border-radius: 10px; margin-bottom: 30px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }}
         table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-        th {{ background: #f1f5f9; padding: 12px 10px; border-bottom: 1px solid #e2e8f0; color: #475569; }}
+        th {{ background: #f8fafc; padding: 12px 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600; border-top: 1px solid #e2e8f0; }}
         td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; }}
         .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; }}
         .buy {{ background: #ef4444; }} 
@@ -272,15 +306,38 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         .eval {{ background: #64748b; }}
         .header-flex {{ display: flex; justify-content: space-between; align-items: center; margin: 25px 0 10px 0; }}
         .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; }}
+        .section-icon {{ border-left: 3px solid #3b82f6; padding-left: 8px; }}
     </style>
     </head><body>
     <div class="chart-container"><canvas id="assetChart"></canvas></div>
     <div class="card-grid" id="stat-cards"></div>
     
+    <div style="margin-bottom: 15px; display:flex; justify-content:flex-end;">
+        <select id="ticker-select" class="sort-select" style="min-width: 250px;" onchange="renderTable()"></select>
+    </div>
+
     <div class="header-flex">
         <div style="display:flex; align-items:center; gap:10px;">
-            <span style="font-weight:700; font-size:16px;">🔍 상세 거래 내역 (배당 포함)</span>
-            <select id="ticker-select" class="sort-select" onchange="renderTable()"></select>
+            <span class="section-icon" style="font-weight:700; font-size:16px;">🗓️ 월별 요약</span>
+        </div>
+        <select id="sort-select-monthly" class="sort-select" onchange="renderTable()">
+            <option value="desc">최신순</option>
+            <option value="asc">과거순</option>
+        </select>
+    </div>
+    
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr><th>기간</th><th>주당배당</th><th>배당률</th><th>배당합계</th><th>기말자산</th><th>증감</th></tr>
+            </thead>
+            <tbody id="monthly-tbody"></tbody>
+        </table>
+    </div>
+    
+    <div class="header-flex">
+        <div style="display:flex; align-items:center; gap:10px;">
+            <span class="section-icon" style="font-weight:700; font-size:16px;">🔍 상세 거래 내역 (배당 포함)</span>
         </div>
         <select id="sort-select-history" class="sort-select" onchange="renderTable()">
             <option value="desc">최신순</option>
@@ -306,6 +363,23 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         keys.forEach(k => sel.add(new Option(data[k].name, k)));
 
         function fmt(v) {{ return Math.floor(v).toLocaleString() + "원"; }}
+        
+        // '만' 단위 포맷터
+        function fmtMan(v) {{
+            if (v === 0) return "0";
+            const isNeg = v < 0;
+            let absV = Math.abs(v);
+            if (absV < 10000) return (isNeg ? "-" : "") + Math.floor(absV).toLocaleString() + "원";
+            let man = Math.floor(absV / 10000);
+            return (isNeg ? "-" : "") + man.toLocaleString() + "만";
+        }}
+        
+        // 증감 색상 포맷터
+        function colorForChange(v) {{
+            if(v > 0) return '#dc2626'; // 빨강
+            if(v < 0) return '#2563eb'; // 파랑
+            return '#334155';
+        }}
 
         function getBadgeClass(type) {{
             if(type.includes('배당금')) return 'div';
@@ -317,8 +391,8 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         function renderTable() {{
             const k = sel.value;
             const d = data[k];
-            const sortOrder = document.getElementById('sort-select-history').value;
             
+            // 상단 요약 카드 렌더링
             document.getElementById('stat-cards').innerHTML = keys.map(key => {{
                 const item = data[key];
                 return `<div class="card" style="border-top-color: ${{key===k?'#ef4444':'#94a3b8'}}">
@@ -328,8 +402,30 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                 </div>`;
             }}).join('');
             
+            // 1. 월별 요약 테이블 렌더링
+            const sortMonthlyOrder = document.getElementById('sort-select-monthly').value;
+            let monthlyData = d.monthly_summary.slice();
+            if (sortMonthlyOrder === 'desc') {{
+                monthlyData.reverse(); 
+            }}
+            
+            document.getElementById('monthly-tbody').innerHTML = monthlyData.map(m => `
+                <tr>
+                    <td>${{m.기간}}</td>
+                    <td>${{Math.floor(m.주당배당).toLocaleString()}}</td>
+                    <td style="color:#d97706; font-weight:600;">${{m.배당률.toFixed(2)}}%</td>
+                    <td>${{m.배당합계 > 0 ? fmtMan(m.배당합계) : '-'}}</td>
+                    <td style="font-weight:600;">${{fmtMan(m.기말자산)}}</td>
+                    <td style="color:${{colorForChange(m.증감)}}; font-weight:600;">
+                        ${{m.증감 > 0 ? '+' : ''}}${{fmtMan(m.증감)}}
+                    </td>
+                </tr>
+            `).join('');
+            
+            // 2. 상세 거래 내역 테이블 렌더링
+            const sortHistoryOrder = document.getElementById('sort-select-history').value;
             let historyData = d.history.slice();
-            if (sortOrder === 'desc') {{
+            if (sortHistoryOrder === 'desc') {{
                 historyData.reverse(); 
             }}
             
@@ -354,4 +450,4 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         renderTable();
     </script></body></html>
     """
-    components.html(html_code, height=1500, scrolling=True)
+    components.html(html_code, height=2000, scrolling=True)
