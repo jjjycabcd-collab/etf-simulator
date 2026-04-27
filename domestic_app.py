@@ -4,6 +4,7 @@ import re
 import json
 import datetime
 import requests
+import io  # 💡 HTML 파싱 안정성을 위해 추가
 import yfinance as yf
 import streamlit as st
 import streamlit.components.v1 as components
@@ -28,26 +29,30 @@ def load_all_tickers():
     """국내 상장 주식 및 ETF 전체 목록 수집"""
     tickers = {}
     
-    # 1. 국내 ETF 전체 마스터 로드 (네이버 금융 API)
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get("https://finance.naver.com/api/sise/etfItemList.nhn", headers=headers, timeout=5)
-        if res.status_code == 200:
-            for item in res.json().get('result', {}).get('etfItemList', []):
-                tickers[item['itemcode']] = item['itemname']
-    except Exception:
-        pass
-
-    # 2. 국내 주식 전체 마스터 로드 (한국거래소 KIND)
+    # 1. 국내 주식 전체 마스터 로드 (한국거래소 KIND)
     try:
         url = "http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
-        # read_html은 여러 표를 리스트로 반환하므로 첫 번째 표 선택
-        df_list = pd.read_html(url, header=0)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        res = requests.get(url, headers=headers, timeout=5)
+        # 💡 io.StringIO를 사용하여 최신 Pandas 환경에서도 경고/에러 없이 파싱되도록 개선
+        df_list = pd.read_html(io.StringIO(res.text), header=0)
         if df_list:
             df = df_list[0]
             for _, row in df.iterrows():
                 code = str(row['종목코드']).zfill(6)
                 tickers[code] = row['회사명']
+    except Exception:
+        # 혹시 모를 망 차단 대비, 핵심 우량주 폴백
+        fallback = {"005930": "삼성전자", "000660": "SK하이닉스", "035420": "NAVER", "035720": "카카오", "005380": "현대차"}
+        tickers.update(fallback)
+
+    # 2. 국내 ETF 전체 마스터 로드 (네이버 금융 API)
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        res = requests.get("https://finance.naver.com/api/sise/etfItemList.nhn", headers=headers, timeout=5)
+        if res.status_code == 200:
+            for item in res.json().get('result', {}).get('etfItemList', []):
+                tickers[item['itemcode']] = item['itemname']
     except Exception:
         pass
         
@@ -127,19 +132,29 @@ if st.session_state.show_settings:
     * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수하여 배당 주기를 극대화합니다.
     """)
 
-    # 종목 코드 검색 아코디언
+    # 💡 종목 코드 검색 아코디언 (정확도 우선 정렬 추가)
     with st.expander("🔍 종목 코드를 모르시나요? (이름으로 코드 검색하기)", expanded=False):
         search_kw = st.text_input("찾고 싶은 국내 주식이나 ETF 이름을 입력하세요. (예: 삼성전자, 배당다우존스)", key="search_input")
         if search_kw:
             search_kw_clean = search_kw.replace(" ", "").lower()
-            final_results = {}
+            matches = []
             
-            # 수집된 마스터 데이터에서 검색
+            # 수집된 마스터 데이터에서 일치하는 모든 종목 찾기
             for code, name in ALL_TICKERS.items():
                 if search_kw_clean in name.replace(" ", "").lower():
-                    final_results[code] = name
-                    if len(final_results) >= 10: 
-                        break
+                    matches.append((code, name))
+            
+            # 💡 정렬 로직: 검색어와 이름이 완전히 똑같으면 최상단 배치, 그다음은 이름이 짧은 순서대로 정렬
+            def sort_key(x):
+                c, n = x
+                clean_n = n.replace(" ", "").lower()
+                exact_match = 0 if clean_n == search_kw_clean else 1
+                return (exact_match, len(n), n)
+                
+            matches.sort(key=sort_key)
+            
+            # 상위 10개만 추출
+            final_results = {code: name for code, name in matches[:10]}
             
             if final_results:
                 st.markdown("##### 💡 검색 결과 (코드를 복사하여 아래 입력창에 붙여넣으세요)")
@@ -333,10 +348,9 @@ if st.session_state.show_settings:
             st.rerun()
 
 # ==========================================
-# 결과 출력 영역 (HTML/Chart.js 렌더링 생략 - 베이스 코드와 동일)
+# 결과 출력 영역
 # ==========================================
 if st.session_state.run_clicked and st.session_state.sim_result_data:
-    # ... 결과 출력 로직은 이전 베이스 코드와 동일하게 유지 ...
     res = st.session_state.sim_result_data
     datasets = []
     colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b']
@@ -344,7 +358,6 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         d = res['all_data'][k]
         datasets.append({'label': d['name'], 'data': d['chart_values'], 'borderColor': colors[idx % 4], 'tension': 0.3, 'fill': False})
 
-    # (이하 HTML_CODE 구성 및 components.html 호출부 생략 - 베이스 코드 유지)
     html_code = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
