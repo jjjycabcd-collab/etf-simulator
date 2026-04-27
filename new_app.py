@@ -153,11 +153,12 @@ if st.session_state.show_settings:
                 ticker_chart_values = []
                 prev_asset = INITIAL_CASH
                 
-                monthly_groups = prices.groupby([prices.index.year, prices.index.month])
+                # 주별(Weekly) 그룹핑으로 변경
+                weekly_groups = prices.groupby([prices.index.isocalendar().year, prices.index.isocalendar().week])
                 
-                for (y, m), group in monthly_groups:
-                    eom_dt = group.index[-1]
-                    eom_price = float(group.iloc[-1])
+                for (y, w), group in weekly_groups:
+                    eow_dt = group.index[-1]
+                    eow_price = float(group.iloc[-1])
                     
                     for date, price in group.items():
                         if date in invest_dates_set:
@@ -179,24 +180,25 @@ if st.session_state.show_settings:
                                     '총자산': float(reserve_cash + available_cash + (total_shares * price))
                                 })
                     
-                    current_asset = float(reserve_cash + available_cash + (total_shares * eom_price))
+                    current_asset = float(reserve_cash + available_cash + (total_shares * eow_price))
                     
-                    label = f"{y}.{m}"
+                    # 주별 라벨 생성 (예: 2023-W01)
+                    label = f"{y}-W{w:02d}"
                     if label not in chart_labels: chart_labels.append(label)
                     ticker_chart_values.append(current_asset)
                     
                     summary.append({
-                        '기간': f"{y}.{m:02d}",
-                        '기말단가': eom_price,
+                        '기간': f"{y}-W{w:02d}",
+                        '기말단가': eow_price,
                         '기말자산': current_asset,
                         '증감': float(current_asset - prev_asset),
                         '수익률': float(((current_asset / INITIAL_CASH) - 1) * 100)
                     })
                     
                     history.append({
-                        '날짜': eom_dt.strftime('%Y/%m/%d'),
+                        '날짜': eow_dt.strftime('%Y/%m/%d'),
                         '구분': '평가',
-                        '단가': eom_price,
+                        '단가': eow_price,
                         '수량': int(total_shares),
                         '거래금액': 0.0,
                         '현금잔고': float(reserve_cash + available_cash),
@@ -242,7 +244,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                 'label': t_data['name'],
                 'data': t_data['chart_values'],
                 'borderColor': colors[idx % len(colors)],
-                'tension': 0.1,
+                'tension': 0.4, # 곡선을 부드럽게 (기존 0.1 -> 0.4)
                 'fill': False
             })
 
@@ -279,7 +281,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
     
     <div class="header-flex">
         <div style="display:flex; align-items:center; gap:10px;">
-            <span style="font-weight:700; font-size:16px;">📅 월별 요약</span>
+            <span style="font-weight:700; font-size:16px;">📅 주별 요약</span>
             <select id="ticker-select-summary" class="sort-select" onchange="renderTables()"></select>
         </div>
         <select id="sort-select-summary" class="sort-select" onchange="renderTables()">
