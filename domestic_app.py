@@ -65,6 +65,14 @@ def fetch_prices_and_dividends(code, start_date, end_date):
 # ==========================================
 st.title("🇰🇷 국내 주식 배당 재투자 시뮬레이터")
 
+# 안내 멘트 추가
+st.info("""
+💡 **참고사항 (데이터 한계)**
+
+yfinance에서 제공하는 배당 기준일은 실제 '배당금 입금일(지급일)'이 아닌 **'배당락일(Ex-Dividend Date)'**입니다. 
+실제 국내 상장 ETF는 배당락일 이후 2~3영업일 뒤에 계좌로 입금되지만, 본 시뮬레이터에서는 제공되는 데이터의 한계상 **배당락일 다음 거래일에 즉시 재투자**되는 것으로 백테스트가 진행됩니다.
+""")
+
 if st.session_state.run_clicked and not st.session_state.show_settings:
     if st.button("⚙️ 시뮬레이션 설정 다시 하기", use_container_width=True):
         st.session_state.show_settings = True
@@ -147,10 +155,43 @@ if st.session_state.show_settings:
                 reserve_cash, available_cash, total_shares = INITIAL_CASH, 0.0, 0
                 history, summary, asset_by_date = [], [], {}
                 prev_asset = INITIAL_CASH
+                
+                reinvest_flag = False # 배당금 다음 날 재투자를 위한 플래그
 
-                # 일 단위 루프 (배당금 체크를 위해)
+                # 일 단위 루프 (배당금 체크 및 다음 날 재투자)
                 for date, price in prices.items():
-                    # 1. 배당금 수취
+                    is_invest_day = date in invest_dates_set
+                    
+                    # 정기 매수일 처리
+                    if is_invest_day:
+                        reserve_cash -= installment
+                        available_cash += installment
+                        
+                    # 매수 실행 (정기 매수일이거나 배당금 재투자 플래그가 켜져 있을 때)
+                    if is_invest_day or reinvest_flag:
+                        shares_to_buy = int(available_cash // float(price))
+                        if shares_to_buy > 0:
+                            available_cash -= shares_to_buy * float(price)
+                            total_shares += shares_to_buy
+                            
+                            # 구분 텍스트 설정
+                            if is_invest_day and reinvest_flag:
+                                gubun_text = '매수+재투자'
+                            elif reinvest_flag:
+                                gubun_text = '배당재투자'
+                            else:
+                                gubun_text = '매수'
+                                
+                            history.append({
+                                '날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '단가': float(price),
+                                '수량': shares_to_buy, '거래금액': float(shares_to_buy * price),
+                                '현금잔고': float(reserve_cash + available_cash),
+                                '총자산': float(reserve_cash + available_cash + (total_shares * price))
+                            })
+                        
+                        reinvest_flag = False # 재투자 완료 후 플래그 해제
+
+                    # 배당금 수취 (오늘 수취하면 다음 날 재투자를 위해 플래그 설정)
                     if date in div_dates_set and total_shares > 0:
                         div_amount = total_shares * float(divs[date])
                         available_cash += div_amount
@@ -159,22 +200,7 @@ if st.session_state.show_settings:
                             '수량': int(total_shares), '거래금액': div_amount, '현금잔고': float(reserve_cash + available_cash),
                             '총자산': float(reserve_cash + available_cash + (total_shares * price))
                         })
-
-                    # 2. 매수 (배당금 포함 전액 재투자 로직)
-                    if date in invest_dates_set:
-                        reserve_cash -= installment
-                        available_cash += installment
-                        
-                        shares_to_buy = int(available_cash // float(price))
-                        if shares_to_buy > 0:
-                            available_cash -= shares_to_buy * float(price)
-                            total_shares += shares_to_buy
-                            history.append({
-                                '날짜': date.strftime('%Y/%m/%d'), '구분': '매수', '단가': float(price),
-                                '수량': shares_to_buy, '거래금액': float(shares_to_buy * price),
-                                '현금잔고': float(reserve_cash + available_cash),
-                                '총자산': float(reserve_cash + available_cash + (total_shares * price))
-                            })
+                        reinvest_flag = True # 배당금이 들어왔으므로 다음 거래일에 무조건 매수하도록 설정
                     
                     # 주간 평가 데이터 저장
                     label = date.strftime('%Y/%m/%d')
@@ -231,7 +257,9 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         th {{ background: #f1f5f9; padding: 12px 10px; border-bottom: 1px solid #e2e8f0; color: #475569; }}
         td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; }}
         .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; }}
-        .buy {{ background: #ef4444; }} .div {{ background: #10b981; }}
+        .buy {{ background: #ef4444; }} 
+        .div {{ background: #10b981; }}
+        .reinvest {{ background: #8b5cf6; }}
         .header-flex {{ display: flex; justify-content: space-between; align-items: center; margin: 25px 0 10px 0; }}
         .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; }}
     </style>
@@ -269,6 +297,12 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
 
         function fmt(v) {{ return Math.floor(v).toLocaleString() + "원"; }}
 
+        function getBadgeClass(type) {{
+            if(type.includes('배당금')) return 'div';
+            if(type.includes('재투자')) return 'reinvest';
+            return 'buy';
+        }}
+
         function renderTable() {{
             const k = sel.value;
             const d = data[k];
@@ -291,7 +325,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             document.getElementById('tbody').innerHTML = historyData.map(h => `
                 <tr>
                     <td>${{h.날짜}}</td>
-                    <td><span class="badge ${{h.구분==='배당금'?'div':'buy'}}">${{h.구분}}</span></td>
+                    <td><span class="badge ${{getBadgeClass(h.구분)}}">${{h.구분}}</span></td>
                     <td>${{fmt(h.단가)}}</td>
                     <td>${{h.수량}}</td>
                     <td>${{fmt(h.거래금액)}}</td>
