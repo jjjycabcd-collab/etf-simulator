@@ -113,7 +113,7 @@ if st.session_state.run_clicked and not st.session_state.show_settings:
         st.rerun()
 
 if st.session_state.show_settings:
-    st.title("🇰🇷 월배당 ETF 백테스트")
+    st.title("월배당 ETF 백테스트")
 
     st.info("""
     💡 **참고사항 (데이터 한계 및 기준)**
