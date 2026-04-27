@@ -130,9 +130,10 @@ if st.session_state.show_settings:
     * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수하여 배당 주기를 극대화합니다.
     """)
 
-    # 💡 종목 코드 검색 아코디언 (국내 + 야후파이낸스 해외 검색 통합)
+    # 💡 종목 코드 검색 아코디언
     with st.expander("🔍 종목 코드를 모르시나요? (이름으로 코드 검색하기)", expanded=False):
-        search_kw = st.text_input("찾고 싶은 국내/해외 주식이나 ETF 이름을 입력하세요. (예: 삼성전자, QQQ)", key="search_input")
+        # 안내 문구 수정: (예: 삼성전자, 커버드콜)
+        search_kw = st.text_input("찾고 싶은 국내 주식이나 ETF 이름을 입력하세요. (예: 삼성전자, 커버드콜)", key="search_input")
         if search_kw:
             search_kw_clean = search_kw.replace(" ", "").lower()
             matches = []
