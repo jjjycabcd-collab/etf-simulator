@@ -10,7 +10,7 @@ import streamlit.components.v1 as components
 # ==========================================
 # 웹 페이지 기본 설정 및 상태 초기화
 # ==========================================
-st.set_page_config(page_title="국내 주식 배당 재투자 시뮬레이터", layout="wide")
+st.set_page_config(page_title="국내 주식 배당 시뮬레이터", layout="wide")
 
 if 'show_settings' not in st.session_state:
     st.session_state.show_settings = True
@@ -48,7 +48,6 @@ def fetch_prices_and_dividends(code, start_date, end_date):
         # 수정주가가 아닌 실제 종가(Close) 수집
         df = ticker.history(start=start_date, end=end_date, auto_adjust=False)
         
-        # 코스피에 없으면 코스닥 시도
         if df.empty and code.isdigit():
             ticker_code = f"{code}.KQ"
             ticker = yf.Ticker(ticker_code)
@@ -66,13 +65,13 @@ def fetch_prices_and_dividends(code, start_date, end_date):
 # ==========================================
 # UI 영역
 # ==========================================
-st.title("🇰🇷 국내 주식 배당 재투자 시뮬레이터")
+st.title("🇰🇷 국내 주식 배당 시뮬레이터")
 
 st.info("""
 💡 **참고사항 (데이터 한계 및 기준)**
 
 * **순수 종가 사용:** 본 시뮬레이터는 배당 수익 이중 계산 방지를 위해 수정주가(Adj Close)가 아닌 **실제 거래된 일별 종가(Close)**를 기준으로 단가를 계산합니다.
-* **배당 재투자 시점:** yfinance에서 제공하는 배당 기준일은 실제 입금일이 아닌 **'배당락일(Ex-Dividend Date)'**입니다. 실제 ETF는 배당락일 2~3영업일 뒤에 입금되지만, 본 시뮬레이터에서는 **배당락일 다음 거래일에 즉시 전액 재투자**되는 것으로 백테스트가 진행됩니다.
+* **배당 기준 시점:** yfinance에서 제공하는 배당 기준일은 실제 입금일이 아닌 **'배당락일(Ex-Dividend Date)'**입니다. 재투자 모드 시 배당락일 다음 거래일에 즉시 전액 재투자되는 것으로 백테스트가 진행됩니다.
 """)
 
 if st.session_state.run_clicked and not st.session_state.show_settings:
@@ -85,18 +84,20 @@ if st.session_state.show_settings:
         st.subheader("⚙️ 시뮬레이션 설정")
         col1, col2 = st.columns(2)
         with col1:
-            cash_input = st.text_input("초기 총 투자금 (원)", "40,000,000") # 기본값 변경
+            cash_input = st.text_input("초기 총 투자금 (원)", "40,000,000")
             period_input = st.text_input("백테스트 기간", "2025~2026")
+            # 추가된 배당금 처리 옵션
+            div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True)
 
         with col2:
-            etf_input = st.text_input("종목 코드 (최대 4개)", "498400, 472150") # 기본값 변경
+            etf_input = st.text_input("종목 코드 (최대 4개)", "498400, 472150")
             strategy_options = st.multiselect(
                 "분할 매수 방식 (단일 종목 시 적용)",
                 ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
-                default=["거치식 (일괄 매수)"] # 기본값 변경
+                default=["거치식 (일괄 매수)"]
             )
             
-        run_btn = st.button("🚀 배당 재투자 시뮬레이션 실행", type="primary", use_container_width=True)
+        run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
 
     if run_btn:
         with st.spinner('배당 및 주가 데이터를 분석 중...'):
@@ -153,6 +154,7 @@ if st.session_state.show_settings:
                 div_dates_set = set(divs.index)
                 
                 reserve_cash, available_cash, total_shares = INITIAL_CASH, 0.0, 0
+                total_withdrawn = 0.0 # 누적 인출금 트래킹용
                 history, summary, asset_by_date = [], [], {}
                 monthly_data = {}
                 prev_asset = INITIAL_CASH
@@ -192,19 +194,29 @@ if st.session_state.show_settings:
                         
                         reinvest_flag = False
 
+                    # 배당금 수취 및 분기 처리
                     if date in div_dates_set and total_shares > 0:
                         div_amount = total_shares * float(divs[date])
-                        available_cash += div_amount
                         
                         monthly_data[month_str]['div_per_share'] += float(divs[date])
                         monthly_data[month_str]['div_total'] += div_amount
                         
-                        history.append({
-                            '날짜': date.strftime('%Y/%m/%d'), '구분': '배당금', '단가': float(divs[date]),
-                            '수량': int(total_shares), '거래금액': div_amount, '현금잔고': float(reserve_cash + available_cash),
-                            '총자산': float(reserve_cash + available_cash + (total_shares * price))
-                        })
-                        reinvest_flag = True
+                        if div_action_input == "재투자":
+                            available_cash += div_amount
+                            history.append({
+                                '날짜': date.strftime('%Y/%m/%d'), '구분': '배당금', '단가': float(divs[date]),
+                                '수량': int(total_shares), '거래금액': div_amount, '현금잔고': float(reserve_cash + available_cash),
+                                '총자산': float(reserve_cash + available_cash + (total_shares * price))
+                            })
+                            reinvest_flag = True
+                        else: # 인출(생활비)
+                            total_withdrawn += div_amount
+                            history.append({
+                                '날짜': date.strftime('%Y/%m/%d'), '구분': '배당금(인출)', '단가': float(divs[date]),
+                                '수량': int(total_shares), '거래금액': div_amount, '현금잔고': float(reserve_cash + available_cash),
+                                '총자산': float(reserve_cash + available_cash + (total_shares * price)) # 포트폴리오 자산에는 미포함
+                            })
+                            # reinvest_flag는 False 유지
                     
                     cur_asset = float(reserve_cash + available_cash + (total_shares * price))
                     
@@ -256,12 +268,18 @@ if st.session_state.show_settings:
                         '증감': change
                     })
                     prev_m_asset = m_data['end_asset']
+                    
+                # 총 수익 계산 시 인출액(total_withdrawn) 보정
+                real_total_asset = final_eval_asset + total_withdrawn
 
                 all_sim_data[t_key] = {
                     'name': target['name'], 'summary': summary, 'history': history,
                     'monthly_summary': monthly_list,
                     'chart_values': chart_vals, 'final_asset': final_eval_asset,
-                    'total_profit': final_eval_asset - INITIAL_CASH, 'profit_rate': ((final_eval_asset / INITIAL_CASH) - 1) * 100
+                    'div_action': div_action_input,
+                    'total_withdrawn': total_withdrawn,
+                    'total_profit': real_total_asset - INITIAL_CASH, 
+                    'profit_rate': ((real_total_asset / INITIAL_CASH) - 1) * 100
                 }
 
             st.session_state.sim_result_data = {
@@ -298,6 +316,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; }}
         .buy {{ background: #ef4444; }} 
         .div {{ background: #10b981; }}
+        .withdraw {{ background: #f59e0b; }} /* 배당금 인출 주황색 배지 */
         .reinvest {{ background: #8b5cf6; }}
         .eval {{ background: #64748b; }}
         .header-flex {{ display: flex; justify-content: space-between; align-items: center; margin: 25px 0 10px 0; }}
@@ -333,7 +352,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
     
     <div class="header-flex">
         <div style="display:flex; align-items:center; gap:10px;">
-            <span class="section-icon" style="font-weight:700; font-size:16px;">🔍 상세 거래 내역 (배당 포함)</span>
+            <span class="section-icon" style="font-weight:700; font-size:16px;">🔍 상세 거래 내역</span>
         </div>
         <select id="sort-select-history" class="sort-select" onchange="renderTable()">
             <option value="desc">최신순</option>
@@ -360,7 +379,6 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
 
         function fmt(v) {{ return Math.floor(v).toLocaleString() + "원"; }}
         
-        // '만' 단위 포맷터
         function fmtMan(v) {{
             if (v === 0) return "0";
             const isNeg = v < 0;
@@ -370,14 +388,14 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             return (isNeg ? "-" : "") + man.toLocaleString() + "만";
         }}
         
-        // 증감 색상 포맷터
         function colorForChange(v) {{
-            if(v > 0) return '#dc2626'; // 빨강
-            if(v < 0) return '#2563eb'; // 파랑
+            if(v > 0) return '#dc2626'; 
+            if(v < 0) return '#2563eb'; 
             return '#334155';
         }}
 
         function getBadgeClass(type) {{
+            if(type.includes('배당금(인출)')) return 'withdraw';
             if(type.includes('배당금')) return 'div';
             if(type.includes('재투자')) return 'reinvest';
             if(type.includes('최종평가')) return 'eval';
@@ -388,13 +406,23 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             const k = sel.value;
             const d = data[k];
             
-            // 상단 요약 카드 렌더링
+            // 요약 카드 렌더링 (인출/재투자 분기 적용)
             document.getElementById('stat-cards').innerHTML = keys.map(key => {{
                 const item = data[key];
+                const isWithdrawal = item.div_action === '인출(생활비)';
+                const assetLabel = isWithdrawal ? '평가 자산' : '최종 자산';
+                const profitLabel = isWithdrawal ? '총 수익금' : '수익금';
+                
+                let withdrawRow = '';
+                if (isWithdrawal) {{
+                    withdrawRow = `<div class="card-row"><span>누적 인출금</span><span style="color:#10b981; font-weight:600;">+${{fmt(item.total_withdrawn)}}</span></div>`;
+                }}
+                
                 return `<div class="card" style="border-top-color: ${{key===k?'#ef4444':'#94a3b8'}}">
                     <h3>${{item.name}}</h3>
-                    <div class="card-row"><span>최종 자산</span><strong>${{fmt(item.final_asset)}}</strong></div>
-                    <div class="card-row"><span>수익률</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}">${{item.profit_rate.toFixed(2)}}%</span></div>
+                    <div class="card-row"><span>${{assetLabel}}</span><strong>${{fmt(item.final_asset)}}</strong></div>
+                    ${{withdrawRow}}
+                    <div class="card-row"><span>${{profitLabel}}</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${{fmt(item.total_profit)}} (${{item.profit_rate.toFixed(2)}}%)</span></div>
                 </div>`;
             }}).join('');
             
