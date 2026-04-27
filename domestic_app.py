@@ -64,6 +64,17 @@ def fetch_prices_and_dividends(code, start_date, end_date):
 # ==========================================
 st.title("🇰🇷 월배당 ETF 백테스트")
 
+# 💡 상단 네비게이션 (국내/해외 링크 분기)
+st.markdown("<br>", unsafe_allow_html=True)
+col_nav1, col_nav2 = st.columns(2)
+with col_nav1:
+    # 현재 페이지 (버튼 형태로 시각적 강조)
+    st.button("🇰🇷 국내 월배당 ETF (현재 페이지)", type="primary", use_container_width=True, disabled=True)
+with col_nav2:
+    # 해외 페이지 링크
+    st.link_button("🌎 해외 ETF 시뮬레이터 이동", "https://etf-simulator-qqq.streamlit.app/", use_container_width=True)
+st.markdown("<br>", unsafe_allow_html=True)
+
 st.info("""
 💡 **참고사항 (데이터 한계 및 기준)**
 
@@ -366,10 +377,10 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         
         .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; min-width: 45px; text-align: center;}}
         .buy {{ background: #ef4444; }} 
-        .sell {{ background: #3b82f6; }} 
+        .sell {{ background: #3b82f6; }} /* 풍차매도 파란색 뱃지 */
         .div {{ background: #10b981; }}
         .withdraw {{ background: #f59e0b; }} 
-        .reinvest {{ background: #8b5cf6; }} 
+        .reinvest {{ background: #8b5cf6; }} /* 풍차매수, 배당재투자 보라색 */
         .eval {{ background: #64748b; }}
         .eval-month {{ background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; }}
         .header-flex {{ display: flex; justify-content: space-between; align-items: center; margin: 25px 0 10px 0; }}
