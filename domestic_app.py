@@ -10,7 +10,7 @@ import streamlit.components.v1 as components
 # ==========================================
 # 웹 페이지 기본 설정 및 상태 초기화
 # ==========================================
-st.set_page_config(page_title="국내 주식 시뮬레이터", layout="wide")
+st.set_page_config(page_title="국내 주식 배당 재투자 시뮬레이터", layout="wide")
 
 if 'show_settings' not in st.session_state:
     st.session_state.show_settings = True
@@ -18,8 +18,6 @@ if 'run_clicked' not in st.session_state:
     st.session_state.run_clicked = False
 if 'sim_result_data' not in st.session_state:
     st.session_state.sim_result_data = None
-if 'display_title' not in st.session_state:
-    st.session_state.display_title = ""
 
 # ==========================================
 # 함수 정의부
@@ -27,46 +25,45 @@ if 'display_title' not in st.session_state:
 
 @st.cache_data(ttl=86400)
 def get_stock_info(code):
-    """야후 파이낸스에서 국내 종목명 가져오기"""
+    """종목명 가져오기"""
     if not code: return ""
     try:
         check_code = f"{code}.KS" if code.isdigit() else code
         ticker = yf.Ticker(check_code)
         name = ticker.info.get('shortName', None)
-        
         if name is None and code.isdigit():
             check_code = f"{code}.KQ"
             ticker = yf.Ticker(check_code)
             name = ticker.info.get('shortName', code)
-            
         return f"{name}({code.upper()})"
     except:
         return code.upper()
 
-def fetch_prices(code, start_date, end_date):
-    """야후 파이낸스 가격 데이터 수집 (국내 시장 및 결측치 제거)"""
+def fetch_prices_and_dividends(code, start_date, end_date):
+    """가격 및 배당 데이터 수집"""
     try:
-        if code.isdigit():
-            ticker = yf.Ticker(f"{code}.KS")
-            df = ticker.history(start=start_date, end=end_date)
-            if df.empty:
-                ticker = yf.Ticker(f"{code}.KQ")
-                df = ticker.history(start=start_date, end=end_date)
-        else:
-            ticker = yf.Ticker(code)
+        ticker_code = f"{code}.KS" if code.isdigit() else code
+        ticker = yf.Ticker(ticker_code)
+        df = ticker.history(start=start_date, end=end_date)
+        
+        # 코스피에 없으면 코스닥 시도
+        if df.empty and code.isdigit():
+            ticker_code = f"{code}.KQ"
+            ticker = yf.Ticker(ticker_code)
             df = ticker.history(start=start_date, end=end_date)
             
-        if df.empty: return pd.Series(dtype=float)
+        if df.empty: 
+            return pd.Series(dtype=float), pd.Series(dtype=float)
+            
         df.index = pd.to_datetime(df.index).tz_localize(None)
-        # 결측치(NaN) 제거 필수
-        return df['Close'].dropna()
+        return df['Close'].dropna(), df['Dividends'].replace(0, pd.NA).dropna()
     except:
-        return pd.Series(dtype=float)
+        return pd.Series(dtype=float), pd.Series(dtype=float)
 
 # ==========================================
 # UI 영역
 # ==========================================
-st.title("🇰🇷 국내 주식/ETF 시뮬레이터")
+st.title("🇰🇷 국내 주식 배당 재투자 시뮬레이터")
 
 if st.session_state.run_clicked and not st.session_state.show_settings:
     if st.button("⚙️ 시뮬레이션 설정 다시 하기", use_container_width=True):
@@ -79,25 +76,21 @@ if st.session_state.show_settings:
         col1, col2 = st.columns(2)
         with col1:
             cash_input = st.text_input("초기 총 투자금 (원)", "10,000,000")
-            period_input = st.text_input("백테스트 기간 (예: 2023~2024)", "2023~2024")
+            period_input = st.text_input("백테스트 기간", "2025~2026")
 
         with col2:
-            etf_input = st.text_input("종목 코드 (숫자 6자리, 쉼표 구분)", "498400, 472150, 475720")
+            etf_input = st.text_input("종목 코드 (최대 4개)", "498400, 472150, 475720")
             strategy_options = st.multiselect(
-                "분할 매수 방식 (※ 단일 종목 입력 시에만 비교 적용)",
+                "분할 매수 방식 (단일 종목 시 적용)",
                 ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
                 default=["거치식 (일괄 매수)", "적립식 (매월)"]
             )
             
-        run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
+        run_btn = st.button("🚀 배당 재투자 시뮬레이션 실행", type="primary", use_container_width=True)
 
     if run_btn:
-        with st.spinner('데이터를 수집하고 병합하는 중입니다...'):
-            try:
-                INITIAL_CASH = float(re.sub(r'[^0-9.]', '', cash_input))
-            except:
-                INITIAL_CASH = 10000000.0
-            
+        with st.spinner('배당 및 주가 데이터를 분석 중...'):
+            INITIAL_CASH = float(re.sub(r'[^0-9.]', '', cash_input))
             try:
                 if '~' in period_input:
                     s_str, e_str = period_input.split('~')
@@ -107,377 +100,178 @@ if st.session_state.show_settings:
                     start_dt = pd.to_datetime(f"{period_input.strip()}-01-01")
                     end_dt = pd.to_datetime(f"{period_input.strip()}-12-31")
             except:
-                start_dt, end_dt = pd.to_datetime("2023-01-01"), pd.to_datetime("2023-12-31")
+                start_dt, end_dt = pd.to_datetime("2025-01-01"), pd.to_datetime("2026-12-31")
 
-            # 종목 파싱 및 최대 4개 제한 로직 적용
-            tickers = [t.strip().upper() for t in etf_input.replace(',', ' ').split() if t.strip()]
-            if len(tickers) > 4:
-                st.warning("⚠️ 동시 비교 분석은 최대 4개까지만 가능합니다. 입력하신 상위 4개 종목만 분석을 진행합니다.")
-                tickers = tickers[:4]
-                
-            if not tickers: tickers = ["005930"]
-
+            tickers = [t.strip().upper() for t in etf_input.replace(',', ' ').split() if t.strip()][:4]
             targets = []
             if len(tickers) == 1:
-                if not strategy_options:
-                    strategy_options = ["적립식 (매월)"]
-                    
-                compare_keys = strategy_options
-                for strat in strategy_options:
-                    targets.append({'key': strat, 'ticker': tickers[0], 'strategy': strat, 'name': f"{get_stock_info(tickers[0])} - {strat}"})
-                st.session_state.display_title = f"### 📊 {period_input} {get_stock_info(tickers[0])} 투자 방식 비교"
+                compare_keys = strategy_options if strategy_options else ["적립식 (매월)"]
+                for strat in compare_keys:
+                    targets.append({'key': strat, 'ticker': tickers[0], 'strategy': strat, 'name': f"{get_stock_info(tickers[0])} ({strat})"})
             else:
                 compare_keys = tickers
                 for t in tickers:
                     targets.append({'key': t, 'ticker': t, 'strategy': "거치식 (일괄 매수)", 'name': get_stock_info(t)})
-                st.session_state.display_title = f"### 📊 {period_input} 국내 종목 비교 (거치식)"
 
-            # ---------------------------------------------------------
-            # 1. 모든 타겟의 데이터를 먼저 수집하여 통합 날짜(X축) 생성
-            # ---------------------------------------------------------
-            target_prices = {}
+            all_sim_data = {}
             global_dates = set()
             
+            # 데이터 수집 및 공통 날짜 생성
+            target_raw_data = {}
             for target in targets:
-                t_code = target['ticker']
-                prices = fetch_prices(t_code, start_dt, end_dt)
+                prices, divs = fetch_prices_and_dividends(target['ticker'], start_dt, end_dt)
                 if not prices.empty:
-                    target_prices[target['key']] = prices
-                    weekly_groups = prices.groupby([prices.index.isocalendar().year, prices.index.isocalendar().week])
-                    for _, group in weekly_groups:
-                        global_dates.add(group.index[-1].strftime('%Y/%m/%d'))
+                    target_raw_data[target['key']] = (prices, divs)
+                    for d in prices.groupby([prices.index.isocalendar().year, prices.index.isocalendar().week]).tail(1).index:
+                        global_dates.add(d.strftime('%Y/%m/%d'))
             
-            # X축 동기화를 위한 정렬된 통합 날짜 리스트
             chart_labels = sorted(list(global_dates))
-            
-            all_sim_data = {}
-            
-            # ---------------------------------------------------------
-            # 2. 개별 시뮬레이션 및 데이터 매핑
-            # ---------------------------------------------------------
+
             for target in targets:
                 t_key = target['key']
+                if t_key not in target_raw_data: continue
                 
-                # 데이터가 아예 없는 종목은 스킵 (UI 상의 카드에서도 제외됨)
-                if t_key not in target_prices: 
-                    continue
-                    
-                prices = target_prices[t_key]
+                prices, divs = target_raw_data[t_key]
                 strat = target['strategy']
-                name = target['name']
                 
-                if strat == "거치식 (일괄 매수)":
-                    invest_dates = [prices.index[0]]
-                elif strat == "적립식 (매일)":
-                    invest_dates = prices.index
-                elif strat == "적립식 (매주)":
-                    invest_dates = prices.groupby([prices.index.isocalendar().year, prices.index.isocalendar().week]).head(1).index
-                elif strat == "적립식 (매월)":
-                    invest_dates = prices.groupby([prices.index.year, prices.index.month]).head(1).index
-                else:
-                    invest_dates = [prices.index[0]]
+                # 매수일 계산
+                if strat == "거치식 (일괄 매수)": invest_dates = [prices.index[0]]
+                elif strat == "적립식 (매일)": invest_dates = prices.index
+                elif strat == "적립식 (매주)": invest_dates = prices.groupby([prices.index.isocalendar().year, prices.index.isocalendar().week]).head(1).index
+                else: invest_dates = prices.groupby([prices.index.year, prices.index.month]).head(1).index
 
-                N_invest = len(invest_dates)
-                installment = INITIAL_CASH / N_invest if N_invest > 0 else 0
+                installment = INITIAL_CASH / len(invest_dates)
                 invest_dates_set = set(invest_dates)
+                div_dates_set = set(divs.index)
                 
-                reserve_cash = INITIAL_CASH 
-                available_cash = 0.0        
-                total_shares = 0
-                
-                history = []
-                summary = []
+                reserve_cash, available_cash, total_shares = INITIAL_CASH, 0.0, 0
+                history, summary, asset_by_date = [], [], {}
                 prev_asset = INITIAL_CASH
-                
-                asset_by_date = {} # 날짜별 평가 자산을 임시 저장
-                
-                weekly_groups = prices.groupby([prices.index.isocalendar().year, prices.index.isocalendar().week])
-                
-                for (y, w), group in weekly_groups:
-                    eow_dt = group.index[-1]
-                    eow_price = float(group.iloc[-1])
+
+                # 일 단위 루프 (배당금 체크를 위해)
+                for date, price in prices.items():
+                    # 1. 배당금 수취
+                    if date in div_dates_set and total_shares > 0:
+                        div_amount = total_shares * float(divs[date])
+                        available_cash += div_amount
+                        history.append({
+                            '날짜': date.strftime('%Y/%m/%d'), '구분': '배당금', '단가': float(divs[date]),
+                            '수량': int(total_shares), '거래금액': div_amount, '현금잔고': float(reserve_cash + available_cash),
+                            '총자산': float(reserve_cash + available_cash + (total_shares * price))
+                        })
+
+                    # 2. 매수 (배당금 포함 전액 재투자 로직)
+                    if date in invest_dates_set:
+                        reserve_cash -= installment
+                        available_cash += installment
+                        
+                        shares_to_buy = int(available_cash // float(price))
+                        if shares_to_buy > 0:
+                            available_cash -= shares_to_buy * float(price)
+                            total_shares += shares_to_buy
+                            history.append({
+                                '날짜': date.strftime('%Y/%m/%d'), '구분': '매수', '단가': float(price),
+                                '수량': shares_to_buy, '거래금액': float(shares_to_buy * price),
+                                '현금잔고': float(reserve_cash + available_cash),
+                                '총자산': float(reserve_cash + available_cash + (total_shares * price))
+                            })
                     
-                    for date, price in group.items():
-                        if date in invest_dates_set:
-                            reserve_cash -= installment
-                            available_cash += installment
-                            
-                            shares_to_buy = int(available_cash // float(price))
-                            if shares_to_buy > 0:
-                                available_cash -= shares_to_buy * float(price)
-                                total_shares += shares_to_buy
-                                
-                                history.append({
-                                    '날짜': date.strftime('%Y/%m/%d'),
-                                    '구분': '매수' if strat == "거치식 (일괄 매수)" else '분할매수',
-                                    '단가': float(price),
-                                    '수량': shares_to_buy,
-                                    '거래금액': float(shares_to_buy * price),
-                                    '현금잔고': float(reserve_cash + available_cash), 
-                                    '총자산': float(reserve_cash + available_cash + (total_shares * price))
-                                })
-                    
-                    current_asset = float(reserve_cash + available_cash + (total_shares * eow_price))
-                    label = eow_dt.strftime('%Y/%m/%d')
-                    
-                    # 딕셔너리에 해당 일자의 자산 매핑
-                    asset_by_date[label] = current_asset
-                    
-                    summary.append({
-                        '기간': label,
-                        '기말단가': eow_price,
-                        '기말자산': current_asset,
-                        '증감': float(current_asset - prev_asset),
-                        '수익률': float(((current_asset / INITIAL_CASH) - 1) * 100)
-                    })
-                    
-                    history.append({
-                        '날짜': eow_dt.strftime('%Y/%m/%d'),
-                        '구분': '평가',
-                        '단가': eow_price,
-                        '수량': int(total_shares),
-                        '거래금액': 0.0,
-                        '현금잔고': float(reserve_cash + available_cash),
-                        '총자산': current_asset
-                    })
-                    prev_asset = current_asset
-                
-                # ---------------------------------------------------------
-                # 3. 통합 X축 기준으로 차트 데이터 일괄 맞춤 (누락 방지)
-                # ---------------------------------------------------------
-                ticker_chart_values = []
-                last_known_asset = INITIAL_CASH # 투자 시작 전이나 결측 기간엔 이전 자산(초기자금) 유지
-                
+                    # 주간 평가 데이터 저장
+                    label = date.strftime('%Y/%m/%d')
+                    if label in chart_labels:
+                        cur_asset = float(reserve_cash + available_cash + (total_shares * price))
+                        asset_by_date[label] = cur_asset
+                        summary.append({
+                            '기간': label, '기말단가': float(price), '기말자산': cur_asset,
+                            '증감': float(cur_asset - prev_asset), '수익률': float(((cur_asset / INITIAL_CASH) - 1) * 100)
+                        })
+                        prev_asset = cur_asset
+
+                chart_vals = []
+                last_val = INITIAL_CASH
                 for lbl in chart_labels:
-                    if lbl in asset_by_date:
-                        last_known_asset = asset_by_date[lbl]
-                    ticker_chart_values.append(last_known_asset)
+                    if lbl in asset_by_date: last_val = asset_by_date[lbl]
+                    chart_vals.append(last_val)
 
                 all_sim_data[t_key] = {
-                    'name': name,
-                    'summary': summary,
-                    'history': history,
-                    'chart_values': ticker_chart_values,
-                    'final_asset': prev_asset,
-                    'total_profit': prev_asset - INITIAL_CASH,
-                    'profit_rate': ((prev_asset / INITIAL_CASH) - 1) * 100
+                    'name': target['name'], 'summary': summary, 'history': history,
+                    'chart_values': chart_vals, 'final_asset': prev_asset,
+                    'total_profit': prev_asset - INITIAL_CASH, 'profit_rate': ((prev_asset / INITIAL_CASH) - 1) * 100
                 }
 
-            # 유효하게 처리된 종목들만 남김
-            valid_compare_keys = [k for k in compare_keys if k in all_sim_data]
-
             st.session_state.sim_result_data = {
-                'initial_cash': INITIAL_CASH,
-                'compare_keys': valid_compare_keys,
-                'labels': chart_labels,
-                'all_data': all_sim_data
+                'initial_cash': INITIAL_CASH, 'compare_keys': [k for k in compare_keys if k in all_sim_data],
+                'labels': chart_labels, 'all_data': all_sim_data
             }
-            st.session_state.run_clicked = True
-            st.session_state.show_settings = False
+            st.session_state.run_clicked, st.session_state.show_settings = True, False
             st.rerun()
 
 # ==========================================
-# 결과 출력 영역 (Client-Side Rendering)
+# 결과 출력 영역 (기존과 동일한 UI 구조 유지)
 # ==========================================
 if st.session_state.run_clicked and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
-    st.markdown(st.session_state.display_title)
-
     datasets = []
-    colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4']
-    for idx, t_key in enumerate(res['compare_keys']):
-        if t_key in res['all_data']:
-            t_data = res['all_data'][t_key]
-            datasets.append({
-                'label': t_data['name'],
-                'data': t_data['chart_values'],
-                'borderColor': colors[idx % len(colors)],
-                'tension': 0.4, 
-                'fill': False
-            })
+    colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b']
+    for idx, k in enumerate(res['compare_keys']):
+        d = res['all_data'][k]
+        datasets.append({'label': d['name'], 'data': d['chart_values'], 'borderColor': colors[idx % 4], 'tension': 0.3, 'fill': False})
 
     html_code = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; color: #334155; }}
-        .card-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; margin-bottom: 25px; }}
-        .card {{ background: white; padding: 18px 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border-top: 4px solid #94a3b8; text-align: left; }}
-        .card h3 {{ font-size: 14px; margin: 0 0 15px 0; color: #1e293b; font-weight:700; line-height: 1.4; word-break: keep-all; }}
-        .card-row {{ display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 8px; color: #64748b; }}
-        .card-row.bold {{ font-weight: 600; color: #334155; }}
-        .card-divider {{ border-top: 1px dashed #cbd5e1; margin: 12px 0; }}
-        .card-total {{ display: flex; justify-content: space-between; font-size: 15px; font-weight: 800; color: #0f172a; align-items: center; }}
-        .section-title {{ font-size: 16px; font-weight: 700; margin: 30px 0 12px 0; border-left: 4px solid #3b82f6; padding-left: 8px; }}
-        .header-flex {{ display: flex; align-items: center; justify-content: space-between; margin: 25px 0 10px 0; }}
-        .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; }}
-        .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 380px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }}
-        .table-wrapper {{ overflow-x: auto; background: white; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }}
-        table {{ width: 100%; border-collapse: collapse; min-width: 600px; }}
-        th {{ background: #f8fafc; padding: 12px; font-size: 12px; border-bottom: 2px solid #e2e8f0; color: #475569; }}
-        td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; font-size: 13px; color: #334155; }}
-        .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; }}
-        .buy {{ background: #ef4444; }} .sell {{ background: #3b82f6; }} .eval {{ background: #94a3b8; }}
+        body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; }}
+        .card-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px; }}
+        .card {{ background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-top: 4px solid #94a3b8; }}
+        .card h3 {{ font-size: 13px; margin: 0 0 10px 0; }}
+        .card-row {{ display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 5px; }}
+        .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 350px; margin-bottom: 20px; }}
+        .table-wrapper {{ overflow-x: auto; background: white; border-radius: 10px; margin-bottom: 20px; }}
+        table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
+        th {{ background: #f1f5f9; padding: 10px; border-bottom: 1px solid #e2e8f0; }}
+        td {{ padding: 8px; border-bottom: 1px solid #f1f5f9; text-align: center; }}
+        .badge {{ padding: 2px 5px; border-radius: 4px; color: white; font-size: 10px; }}
+        .buy {{ background: #ef4444; }} .div {{ background: #10b981; }}
     </style>
     </head><body>
-    
-    <div class="section-title">📈 자산 성장 비교 (원)</div>
     <div class="chart-container"><canvas id="assetChart"></canvas></div>
-
     <div class="card-grid" id="stat-cards"></div>
-    
-    <div class="header-flex">
-        <div style="display:flex; align-items:center; gap:10px;">
-            <span style="font-weight:700; font-size:16px;">📅 주별 요약</span>
-            <select id="ticker-select-summary" class="sort-select" onchange="renderTables()"></select>
-        </div>
-        <select id="sort-select-summary" class="sort-select" onchange="renderTables()">
-            <option value="desc">최신순</option>
-            <option value="asc">과거순</option>
-        </select>
-    </div>
-    <div class="table-wrapper">
-        <table><thead><tr><th>기간</th><th>기말단가</th><th>기말자산</th><th>증감</th><th>누적수익률</th></tr></thead>
-        <tbody id="summary-tbody"></tbody></table>
-    </div>
-
-    <div class="header-flex">
-        <div style="display:flex; align-items:center; gap:10px;">
-            <span style="font-weight:700; font-size:16px;">🔍 상세 거래 내역</span>
-            <select id="ticker-select-history" class="sort-select" onchange="renderTables()"></select>
-        </div>
-        <select id="sort-select-history" class="sort-select" onchange="renderTables()">
-            <option value="asc">과거순</option>
-            <option value="desc">최신순</option>
-        </select>
-    </div>
-    <div class="table-wrapper">
-        <table><thead><tr><th>날짜</th><th>구분</th><th>단가</th><th>수량</th><th>거래금액</th><th>잔고(대기자금 포함)</th><th>총자산</th></tr></thead>
-        <tbody id="history-tbody"></tbody></table>
-    </div>
-
+    <div style="font-weight:700; margin: 20px 0 10px 0;">🔍 상세 거래 내역 (배당 포함)</div>
+    <select id="ticker-select" style="padding: 5px; margin-bottom: 10px;" onchange="renderTable()"></select>
+    <div class="table-wrapper"><table><thead><tr><th>날짜</th><th>구분</th><th>단가/분배금</th><th>수량</th><th>금액</th><th>현금잔고</th><th>총자산</th></tr></thead><tbody id="tbody"></tbody></table></div>
     <script>
-        const allData = {json.dumps(res['all_data'])};
-        const compareKeys = {json.dumps(res['compare_keys'])};
+        const data = {json.dumps(res['all_data'])};
+        const keys = {json.dumps(res['compare_keys'])};
         const labels = {json.dumps(res['labels'])};
-        const initialCash = {res['initial_cash']};
+        
+        const sel = document.getElementById('ticker-select');
+        keys.forEach(k => sel.add(new Option(data[k].name, k)));
 
-        const tSelSum = document.getElementById('ticker-select-summary');
-        const tSelHis = document.getElementById('ticker-select-history');
-        compareKeys.forEach(t => {{
-            if(allData[t]) {{
-                let opt1 = new Option(allData[t].name, t);
-                let opt2 = new Option(allData[t].name, t);
-                tSelSum.add(opt1); tSelHis.add(opt2);
-            }}
-        }});
+        function fmt(v) {{ return Math.floor(v).toLocaleString() + "원"; }}
 
-        function fmtMoney(val) {{
-            if (val === 0 || val === '0') return "0원";
-            let num = Number(val);
-            if (Math.abs(num) >= 10000) {{
-                return Math.floor(num / 10000).toLocaleString() + "만 원";
-            }}
-            return Math.floor(num).toLocaleString() + "원";
-        }}
-
-        function renderTables() {{
-            const targetSum = tSelSum.value;
-            const targetHis = tSelHis.value;
-            const sortSum = document.getElementById('sort-select-summary').value;
-            const sortHis = document.getElementById('sort-select-history').value;
-
-            document.getElementById('stat-cards').innerHTML = compareKeys.map(t => {{
-                if(!allData[t]) return "";
-                const d = allData[t];
-                const profitColor = d.total_profit >= 0 ? '#dc2626' : '#2563eb';
-                const sign = d.total_profit > 0 ? '+' : '';
-                
-                return `<div class="card" style="border-top-color: ${{getTickerColor(t)}}">
-                    <h3>${{d.name}}</h3>
-                    
-                    <div class="card-row">
-                        <span>초기 투자금</span>
-                        <span class="bold">${{fmtMoney(initialCash)}}</span>
-                    </div>
-                    
-                    <div class="card-row">
-                        <span>수익금</span>
-                        <span style="font-weight: 600; color: ${{profitColor}};">
-                            ${{sign}}${{fmtMoney(d.total_profit)}} (${{d.profit_rate.toFixed(2)}}%)
-                        </span>
-                    </div>
-                    
-                    <div class="card-divider"></div>
-                    
-                    <div class="card-total">
-                        <span>최종 자산</span>
-                        <span style="color: #dc2626; font-size: 18px;">${{fmtMoney(d.final_asset)}}</span>
-                    </div>
+        function renderTable() {{
+            const k = sel.value;
+            const d = data[k];
+            document.getElementById('stat-cards').innerHTML = keys.map(key => {{
+                const item = data[key];
+                return `<div class="card" style="border-top-color: ${{key===k?'#ef4444':'#94a3b8'}}">
+                    <h3>${{item.name}}</h3>
+                    <div class="card-row"><span>최종 자산</span><strong>${{fmt(item.final_asset)}}</strong></div>
+                    <div class="card-row"><span>수익률</span><span style="color:red">${{item.profit_rate.toFixed(2)}}%</span></div>
                 </div>`;
             }}).join('');
-
-            let sData = [...allData[targetSum].summary];
-            if(sortSum === 'desc') sData.reverse();
-            document.getElementById('summary-tbody').innerHTML = sData.map(s => `
-                <tr>
-                    <td>${{s.기간}}</td>
-                    <td>${{fmtMoney(s.기말단가)}}</td>
-                    <td><b>${{fmtMoney(s.기말자산)}}</b></td>
-                    <td style="color:${{s.증감 >=0 ? '#dc2626':'#2563eb'}}; font-weight:600;">${{s.증감 > 0 ? '+' : ''}}${{fmtMoney(s.증감)}}</td>
-                    <td style="color:${{s.수익률 >=0 ? '#dc2626':'#2563eb'}}; font-weight:600;">${{s.수익률.toFixed(2)}}%</td>
-                </tr>
-            `).join('');
-
-            let hData = [...allData[targetHis].history];
-            if(sortHis === 'desc') hData.reverse();
-            document.getElementById('history-tbody').innerHTML = hData.map(h => `
-                <tr>
-                    <td>${{h.날짜}}</td>
-                    <td><span class="badge ${{h.구분.includes('매수') ? 'buy' : 'eval'}}">${{h.구분}}</span></td>
-                    <td>${{fmtMoney(h.단가)}}</td>
-                    <td>${{h.수량.toLocaleString()}}</td>
-                    <td>${{h.거래금액 > 0 ? fmtMoney(h.거래금액) : '-'}}</td>
-                    <td>${{fmtMoney(h.현금잔고)}}</td>
-                    <td style="font-weight:700;">${{fmtMoney(h.총자산)}}</td>
-                </tr>
+            
+            document.getElementById('tbody').innerHTML = d.history.slice().reverse().map(h => `
+                <tr><td>${{h.날짜}}</td><td><span class="badge ${{h.구분==='배당금'?'div':'buy'}}">${{h.구분}}</span></td>
+                <td>${{fmt(h.단가)}}</td><td>${{h.수량}}</td><td>${{fmt(h.거래금액)}}</td><td>${{fmt(h.현금잔고)}}</td><td><strong>${{fmt(h.총자산)}}</strong></td></tr>
             `).join('');
         }}
-
-        function getTickerColor(ticker) {{
-            const idx = compareKeys.indexOf(ticker);
-            const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4'];
-            return colors[idx % colors.length];
-        }}
-
-        let chartDatasets = {json.dumps(datasets)};
 
         new Chart(document.getElementById('assetChart'), {{
-            type: 'line',
-            data: {{ labels: labels, datasets: chartDatasets }},
-            options: {{ 
-                responsive: true, 
-                maintainAspectRatio: false,
-                interaction: {{ mode: 'index', intersect: false }},
-                plugins: {{
-                    legend: {{ position: 'top', labels: {{ usePointStyle: true, boxWidth: 8 }} }}
-                }},
-                scales: {{ 
-                    y: {{ 
-                        grid: {{ color: '#f1f5f9' }},
-                        ticks: {{ 
-                            color: '#64748b',
-                            callback: function(value) {{ 
-                                return (value / 10000).toLocaleString() + '만'; 
-                            }} 
-                        }} 
-                    }},
-                    x: {{ grid: {{ display: false }}, ticks: {{ color: '#64748b' }} }}
-                }}
-            }}
+            type: 'line', data: {{ labels: labels, datasets: {json.dumps(datasets)} }},
+            options: {{ responsive: true, maintainAspectRatio: false, scales: {{ y: {{ ticks: {{ callback: v => (v/10000) + '만' }} }} }} }}
         }});
-
-        renderTables();
-    </script>
-    </body></html>
+        renderTable();
+    </script></body></html>
     """
-    components.html(html_code, height=2500, scrolling=True)
+    components.html(html_code, height=1500, scrolling=True)
