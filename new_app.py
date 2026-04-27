@@ -36,6 +36,18 @@ def get_stock_info(code):
     except:
         return code.upper()
 
+@st.cache_data(ttl=3600)
+def get_current_exchange_rate():
+    """야후 파이낸스에서 실시간(또는 전일 종가) 원/달러 환율 가져오기"""
+    try:
+        ticker = yf.Ticker("USDKRW=X")
+        df = ticker.history(period="1d")
+        if not df.empty:
+            return float(df['Close'].iloc[-1])
+    except:
+        pass
+    return 1400.0  # API 호출 실패 시 기본값
+
 def fetch_prices(code, start_date, end_date):
     """야후 파이낸스 가격 데이터 수집"""
     try:
@@ -69,7 +81,9 @@ if st.session_state.show_settings:
             with col_c1:
                 currency_option = st.radio("결과 표시 통화", ["USD ($)", "KRW (원)"], horizontal=True)
             with col_c2:
-                exchange_rate = st.number_input("적용 환율 (원/$)", value=1400, step=10)
+                # 실시간 환율을 가져와서 기본값으로 설정 (소수점 1자리까지 반올림)
+                current_rate = get_current_exchange_rate()
+                exchange_rate = st.number_input("적용 환율 (원/$)", value=float(round(current_rate, 1)), step=10.0)
 
         with col2:
             etf_input = st.text_input("종목 티커 (쉼표 구분)", "QQQ")
@@ -104,7 +118,6 @@ if st.session_state.show_settings:
 
             targets = []
             if len(tickers) == 1:
-                # 사용자가 방식 선택을 전부 지웠을 경우 방어 코드 (빈 차트 오류 방지)
                 if not strategy_options:
                     strategy_options = ["적립식 (매월)"]
                     
@@ -183,7 +196,6 @@ if st.session_state.show_settings:
                     
                     current_asset = float(reserve_cash + available_cash + (total_shares * eow_price))
                     
-                    # 라벨을 "해당 주의 마지막 거래일 날짜"로 설정
                     label = eow_dt.strftime('%Y/%m/%d')
                     
                     if label not in chart_labels: chart_labels.append(label)
