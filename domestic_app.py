@@ -4,7 +4,7 @@ import re
 import json
 import datetime
 import requests
-import io  # 💡 HTML 파싱 안정성을 위해 추가
+import io
 import yfinance as yf
 import streamlit as st
 import streamlit.components.v1 as components
@@ -34,7 +34,6 @@ def load_all_tickers():
         url = "http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         res = requests.get(url, headers=headers, timeout=5)
-        # 💡 io.StringIO를 사용하여 최신 Pandas 환경에서도 경고/에러 없이 파싱되도록 개선
         df_list = pd.read_html(io.StringIO(res.text), header=0)
         if df_list:
             df = df_list[0]
@@ -42,7 +41,6 @@ def load_all_tickers():
                 code = str(row['종목코드']).zfill(6)
                 tickers[code] = row['회사명']
     except Exception:
-        # 혹시 모를 망 차단 대비, 핵심 우량주 폴백
         fallback = {"005930": "삼성전자", "000660": "SK하이닉스", "035420": "NAVER", "035720": "카카오", "005380": "현대차"}
         tickers.update(fallback)
 
@@ -132,23 +130,39 @@ if st.session_state.show_settings:
     * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수하여 배당 주기를 극대화합니다.
     """)
 
-    # 💡 종목 코드 검색 아코디언 (정확도 우선 정렬 추가)
+    # 💡 종목 코드 검색 아코디언 (국내 + 야후파이낸스 해외 검색 통합)
     with st.expander("🔍 종목 코드를 모르시나요? (이름으로 코드 검색하기)", expanded=False):
-        search_kw = st.text_input("찾고 싶은 국내 주식이나 ETF 이름을 입력하세요. (예: 삼성전자, 배당다우존스)", key="search_input")
+        search_kw = st.text_input("찾고 싶은 국내/해외 주식이나 ETF 이름을 입력하세요. (예: 삼성전자, QQQ)", key="search_input")
         if search_kw:
             search_kw_clean = search_kw.replace(" ", "").lower()
             matches = []
             
-            # 수집된 마스터 데이터에서 일치하는 모든 종목 찾기
+            # 1. 국내 수집된 마스터 데이터에서 검색
             for code, name in ALL_TICKERS.items():
-                if search_kw_clean in name.replace(" ", "").lower():
+                if search_kw_clean in name.replace(" ", "").lower() or search_kw_clean == code.lower():
                     matches.append((code, name))
+                    
+            # 2. 해외 종목 검색 (야후 파이낸스 API 활용)
+            try:
+                yf_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={search_kw}&quotesCount=5&newsCount=0"
+                yf_headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+                yf_res = requests.get(yf_url, headers=yf_headers, timeout=3)
+                
+                if yf_res.status_code == 200:
+                    for quote in yf_res.json().get('quotes', []):
+                        sym = quote.get('symbol')
+                        sname = quote.get('shortname', sym)
+                        # 국내 주식(.KS, .KQ)은 이미 로컬 DB에서 찾았으므로 제외
+                        if sym and not sym.endswith('.KS') and not sym.endswith('.KQ'):
+                            matches.append((sym, f"[해외] {sname}"))
+            except Exception:
+                pass
             
-            # 💡 정렬 로직: 검색어와 이름이 완전히 똑같으면 최상단 배치, 그다음은 이름이 짧은 순서대로 정렬
+            # 정렬 로직: 검색어와 이름이나 코드가 완전히 똑같으면 최상단 배치
             def sort_key(x):
                 c, n = x
-                clean_n = n.replace(" ", "").lower()
-                exact_match = 0 if clean_n == search_kw_clean else 1
+                clean_n = n.replace(" ", "").replace("[해외]", "").strip().lower()
+                exact_match = 0 if clean_n == search_kw_clean or c.lower() == search_kw_clean else 1
                 return (exact_match, len(n), n)
                 
             matches.sort(key=sort_key)
@@ -174,7 +188,7 @@ if st.session_state.show_settings:
                 div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True)
 
             with col2:
-                etf_input = st.text_input("종목 코드 (최대 4개, 위 🔍검색창 활용)", "498400, 472150, 498400 + 472150")
+                etf_input = st.text_input("종목 코드 (최대 4개, 위 🔍검색창 활용)", "498400, 472150, QQQ, SCHD")
                 strategy_options = st.multiselect(
                     "분할 매수 방식 (단일 종목 시 적용)",
                     ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
