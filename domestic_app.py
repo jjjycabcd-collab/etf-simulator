@@ -10,7 +10,7 @@ import streamlit.components.v1 as components
 # ==========================================
 # 웹 페이지 기본 설정 및 상태 초기화
 # ==========================================
-st.set_page_config(page_title="국내 주식 배당 시뮬레이터", layout="wide")
+st.set_page_config(page_title="월배당 ETF 백테스트", layout="wide")
 
 if 'show_settings' not in st.session_state:
     st.session_state.show_settings = True
@@ -62,7 +62,7 @@ def fetch_prices_and_dividends(code, start_date, end_date):
 # ==========================================
 # UI 영역
 # ==========================================
-st.title("🇰🇷 국내 주식 배당 시뮬레이터")
+st.title("🇰🇷 월배당 ETF 백테스트")
 
 st.info("""
 💡 **참고사항 (데이터 한계 및 기준)**
@@ -73,13 +73,13 @@ st.info("""
 """)
 
 if st.session_state.run_clicked and not st.session_state.show_settings:
-    if st.button("⚙️ 시뮬레이션 설정 다시 하기", use_container_width=True):
+    if st.button("⚙️ 테스트 환경 다시 설정하기", use_container_width=True):
         st.session_state.show_settings = True
         st.rerun()
 
 if st.session_state.show_settings:
     with st.container(border=True):
-        st.subheader("⚙️ 시뮬레이션 설정")
+        st.subheader("⚙️ 테스트 환경")
         col1, col2 = st.columns(2)
         with col1:
             cash_input = st.text_input("초기 총 투자금 (원)", "40,000,000")
@@ -94,7 +94,7 @@ if st.session_state.show_settings:
                 default=["거치식 (일괄 매수)"]
             )
             
-        run_btn = st.button("🚀 배당 재투자 시뮬레이션 실행", type="primary", use_container_width=True)
+        run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
 
     if run_btn:
         with st.spinner('배당풍차 및 주가 데이터를 통합 분석 중...'):
@@ -110,7 +110,7 @@ if st.session_state.show_settings:
             except:
                 start_dt, end_dt = pd.to_datetime("2025-01-01"), pd.to_datetime("2026-12-31")
 
-            # 타겟 파싱 및 compare_keys 초기화 수정 부분
+            # 타겟 파싱
             raw_target_strs = [t.strip().upper() for t in etf_input.split(',') if t.strip()][:4]
             targets = []
             compare_keys = [] 
@@ -366,10 +366,10 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         
         .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; min-width: 45px; text-align: center;}}
         .buy {{ background: #ef4444; }} 
-        .sell {{ background: #3b82f6; }} /* 풍차매도 파란색 뱃지 */
+        .sell {{ background: #3b82f6; }} 
         .div {{ background: #10b981; }}
         .withdraw {{ background: #f59e0b; }} 
-        .reinvest {{ background: #8b5cf6; }} /* 풍차매수, 배당재투자 보라색 */
+        .reinvest {{ background: #8b5cf6; }} 
         .eval {{ background: #64748b; }}
         .eval-month {{ background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; }}
         .header-flex {{ display: flex; justify-content: space-between; align-items: center; margin: 25px 0 10px 0; }}
@@ -485,7 +485,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                 </tr>
             `).join('');
             
-            // 상세 거래 내역 테이블 렌더링 (종목 컬럼 추가됨)
+            // 상세 거래 내역 테이블 렌더링
             let historyData = d.history.slice();
             if (document.getElementById('sort-select-history').value === 'desc') historyData.reverse(); 
             
