@@ -152,11 +152,12 @@ if st.session_state.show_settings:
                 invest_dates_set = set(invest_dates)
                 div_dates_set = set(divs.index)
                 
-                # 매월 말일 계산 (월말평가용)
                 eom_dates_set = set(prices.groupby([prices.index.year, prices.index.month]).tail(1).index)
                 
                 reserve_cash, available_cash, total_shares = INITIAL_CASH, 0.0, 0
                 total_withdrawn = 0.0 
+                total_dividend = 0.0 # 총 배당금 누적용 변수 추가
+                
                 history, summary, asset_by_date = [], [], {}
                 monthly_data = {}
                 prev_asset = INITIAL_CASH
@@ -202,6 +203,7 @@ if st.session_state.show_settings:
                         
                         monthly_data[month_str]['div_per_share'] += float(divs[date])
                         monthly_data[month_str]['div_total'] += div_amount
+                        total_dividend += div_amount # 총 배당금 누적
                         
                         if div_action_input == "재투자":
                             available_cash += div_amount
@@ -221,7 +223,6 @@ if st.session_state.show_settings:
                     
                     cur_asset = float(reserve_cash + available_cash + (total_shares * price))
                     
-                    # 월말평가 기록 (마지막 전체 평가일과 중복되지 않도록 처리)
                     if date in eom_dates_set and date != prices.index[-1]:
                         history.append({
                             '날짜': date.strftime('%Y/%m/%d'), '구분': '월말평가', '단가': float(price),
@@ -285,6 +286,8 @@ if st.session_state.show_settings:
                     'monthly_summary': monthly_list,
                     'chart_values': chart_vals, 'final_asset': final_eval_asset,
                     'div_action': div_action_input,
+                    'initial_cash': INITIAL_CASH, # 초기 투자금 저장
+                    'total_dividend': total_dividend, # 총 배당금 저장
                     'total_withdrawn': total_withdrawn,
                     'total_profit': real_total_asset - INITIAL_CASH, 
                     'profit_rate': ((real_total_asset / INITIAL_CASH) - 1) * 100
@@ -416,7 +419,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             const k = sel.value;
             const d = data[k];
             
-            // 요약 카드 렌더링
+            // 요약 카드 렌더링 (초기 투자금, 총 배당금 항목 추가)
             document.getElementById('stat-cards').innerHTML = keys.map(key => {{
                 const item = data[key];
                 const isWithdrawal = item.div_action === '인출(생활비)';
@@ -430,6 +433,8 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                 
                 return `<div class="card" style="border-top-color: ${{key===k?'#ef4444':'#94a3b8'}}">
                     <h3>${{item.name}}</h3>
+                    <div class="card-row"><span>초기 투자금</span><strong>${{fmt(item.initial_cash)}}</strong></div>
+                    <div class="card-row"><span>총 배당금</span><span style="color:#d97706; font-weight:600;">+${{fmt(item.total_dividend)}}</span></div>
                     <div class="card-row"><span>${{assetLabel}}</span><strong>${{fmt(item.final_asset)}}</strong></div>
                     ${{withdrawRow}}
                     <div class="card-row"><span>${{profitLabel}}</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${{fmt(item.total_profit)}} (${{item.profit_rate.toFixed(2)}}%)</span></div>
