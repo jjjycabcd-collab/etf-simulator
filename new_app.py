@@ -102,11 +102,12 @@ if st.session_state.show_settings:
             tickers = [t.strip().upper() for t in etf_input.replace(',', ' ').split() if t.strip()]
             if not tickers: tickers = ["QQQ"]
 
-            if "거치식 (일괄 매수)" not in strategy_options:
-                strategy_options.insert(0, "거치식 (일괄 매수)")
-
             targets = []
             if len(tickers) == 1:
+                # 사용자가 방식 선택을 전부 지웠을 경우 방어 코드 (빈 차트 오류 방지)
+                if not strategy_options:
+                    strategy_options = ["적립식 (매월)"]
+                    
                 compare_keys = strategy_options
                 for strat in strategy_options:
                     targets.append({'key': strat, 'ticker': tickers[0], 'strategy': strat, 'name': f"{get_stock_info(tickers[0])} - {strat}"})
@@ -182,14 +183,14 @@ if st.session_state.show_settings:
                     
                     current_asset = float(reserve_cash + available_cash + (total_shares * eow_price))
                     
-                    # 라벨을 "해당 주의 마지막 거래일 날짜"로 수정
+                    # 라벨을 "해당 주의 마지막 거래일 날짜"로 설정
                     label = eow_dt.strftime('%Y/%m/%d')
                     
                     if label not in chart_labels: chart_labels.append(label)
                     ticker_chart_values.append(current_asset)
                     
                     summary.append({
-                        '기간': label, # 여기에도 수정된 날짜 라벨 적용
+                        '기간': label,
                         '기말단가': eow_price,
                         '기말자산': current_asset,
                         '증감': float(current_asset - prev_asset),
