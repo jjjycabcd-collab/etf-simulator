@@ -153,7 +153,7 @@ if st.session_state.show_settings:
                 ticker_chart_values = []
                 prev_asset = INITIAL_CASH
                 
-                # 주별(Weekly) 그룹핑으로 변경
+                # 주별(Weekly) 그룹핑
                 weekly_groups = prices.groupby([prices.index.isocalendar().year, prices.index.isocalendar().week])
                 
                 for (y, w), group in weekly_groups:
@@ -182,13 +182,14 @@ if st.session_state.show_settings:
                     
                     current_asset = float(reserve_cash + available_cash + (total_shares * eow_price))
                     
-                    # 주별 라벨 생성 (예: 2023-W01)
-                    label = f"{y}-W{w:02d}"
+                    # 라벨을 "해당 주의 마지막 거래일 날짜"로 수정
+                    label = eow_dt.strftime('%Y/%m/%d')
+                    
                     if label not in chart_labels: chart_labels.append(label)
                     ticker_chart_values.append(current_asset)
                     
                     summary.append({
-                        '기간': f"{y}-W{w:02d}",
+                        '기간': label, # 여기에도 수정된 날짜 라벨 적용
                         '기말단가': eow_price,
                         '기말자산': current_asset,
                         '증감': float(current_asset - prev_asset),
@@ -244,7 +245,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                 'label': t_data['name'],
                 'data': t_data['chart_values'],
                 'borderColor': colors[idx % len(colors)],
-                'tension': 0.4, # 곡선을 부드럽게 (기존 0.1 -> 0.4)
+                'tension': 0.4, 
                 'fill': False
             })
 
