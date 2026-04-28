@@ -21,17 +21,16 @@ if 'run_clicked' not in st.session_state:
 if 'sim_result_data' not in st.session_state:
     st.session_state.sim_result_data = None
 
-# 💡 [핵심 수정] 위젯이 화면에서 사라져도 값을 기억하는 '영구 보관소' 생성
+# --- 입력값 유지를 위한 세션 상태 초기화 ---
 if 'last_inputs' not in st.session_state:
     st.session_state.last_inputs = {
         'cash': "5,000,000",
         'period': "2025.1~2026.4",
         'div': "재투자",
-        'etf': "498400, 472150, 498400 + 472150",
+        'etf': "498400, 472150",
         'strat': ["거치식 (일괄 매수)"]
     }
 
-# 보관소의 값을 위젯 상태로 복구 (다시 설정하기를 누를 때마다 실행됨)
 if 'saved_cash' not in st.session_state: st.session_state.saved_cash = st.session_state.last_inputs['cash']
 if 'saved_period' not in st.session_state: st.session_state.saved_period = st.session_state.last_inputs['period']
 if 'saved_div_action' not in st.session_state: st.session_state.saved_div_action = st.session_state.last_inputs['div']
@@ -176,16 +175,20 @@ if st.session_state.show_settings:
 
         with col2:
             etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", key="saved_etf", placeholder="498400, 472150, 498400 + 472150")
+            
+            # 💡 [핵심 수정] 텍스트 입력창에 '+'가 있으면 분할 매수 옵션을 회색으로 비활성화시킴
+            is_windmill_mode = '+' in etf_input
+            
             strategy_options = st.multiselect(
-                "분할 매수 방식 (단일 종목 시 적용)",
+                "분할 매수 방식 (배당풍차 포함 시 선택 불가)",
                 ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
-                key="saved_strategy"
+                key="saved_strategy",
+                disabled=is_windmill_mode
             )
             
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
 
     if run_btn:
-        # 💡 [핵심 수정] 위젯이 숨겨지기 직전에 현재 입력된 값을 안전한 보관소에 백업
         st.session_state.last_inputs = {
             'cash': cash_input,
             'period': period_input,
@@ -221,13 +224,19 @@ if st.session_state.show_settings:
             targets = []
             compare_keys = [] 
             
-            if len(raw_target_strs) == 1 and '+' not in raw_target_strs[0]:
+            # 💡 [핵심 수정] 타겟 생성 로직 분기: 입력된 종목 중 풍차가 하나라도 있는지 확인
+            has_windmill = any('+' in t for t in raw_target_strs)
+            
+            if not has_windmill:
+                # 풍차가 아예 없다면 다중 종목이더라도 각각의 분할 매수 전략을 모두 교차 생성
                 strats = strategy_options if strategy_options else ["거치식 (일괄 매수)"]
-                for strat in strats:
-                    key = f"{raw_target_strs[0]}_{strat}"
-                    targets.append({'key': key, 'ticker': raw_target_strs[0], 'strategy': strat, 'name': f"{get_stock_info(raw_target_strs[0])} ({strat})"})
-                    compare_keys.append(key)
+                for t in raw_target_strs:
+                    for strat in strats:
+                        key = f"{t}_{strat}"
+                        targets.append({'key': key, 'ticker': t, 'strategy': strat, 'name': f"{get_stock_info(t)} ({strat})"})
+                        compare_keys.append(key)
             else:
+                # 풍차가 하나라도 섞여 있다면 분할 매수 무시하고 모두 '거치식'으로 일괄 처리
                 for t in raw_target_strs:
                     name = f"배당풍차 ({t})" if '+' in t else f"{get_stock_info(t)}"
                     targets.append({'key': t, 'ticker': t, 'strategy': "거치식 (일괄 매수)", 'name': name})
@@ -368,10 +377,13 @@ if st.session_state.show_settings:
 if st.session_state.run_clicked and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
     datasets = []
-    colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b']
+    
+    # 💡 [핵심 수정] 다중 종목 + 다중 매수 방식일 때 라인이 많아질 것을 대비해 차트 색상 팔레트 10개로 확장
+    colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16', '#6366f1', '#14b8a6']
+    
     for idx, k in enumerate(res['compare_keys']):
         d = res['all_data'][k]
-        datasets.append({'label': d['name'], 'data': d['chart_values'], 'borderColor': colors[idx % 4], 'tension': 0.3, 'fill': False})
+        datasets.append({'label': d['name'], 'data': d['chart_values'], 'borderColor': colors[idx % len(colors)], 'tension': 0.3, 'fill': False})
 
     html_code = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
