@@ -29,15 +29,17 @@ if 'last_inputs' not in st.session_state:
         'cash': "5,000,000",
         'period': "2025.1~2026.4",
         'div': "재투자",
-        'etf': "498400 + 472150",
+        'etf': "498400, 472150, 498400 + 472150",
         'strat': ["거치식 (일괄 매수)"],
-        'strat_wm': ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"]
+        'strat_wm': ["일괄 매수"]
     }
 
 if 'saved_cash' not in st.session_state: st.session_state.saved_cash = st.session_state.last_inputs['cash']
 if 'saved_period' not in st.session_state: st.session_state.saved_period = st.session_state.last_inputs['period']
 if 'saved_div_action' not in st.session_state: st.session_state.saved_div_action = st.session_state.last_inputs['div']
 if 'saved_etf' not in st.session_state: st.session_state.saved_etf = st.session_state.last_inputs['etf']
+if 'saved_strategy' not in st.session_state: st.session_state.saved_strategy = st.session_state.last_inputs['strat']
+if 'saved_strategy_wm' not in st.session_state: st.session_state.saved_strategy_wm = st.session_state.last_inputs['strat_wm']
 
 # ==========================================
 # 종목 데이터 마스터 적재 (캐싱)
@@ -130,7 +132,7 @@ if st.session_state.show_settings:
     💡 **참고사항 (데이터 한계 및 기준)**
     * **순수 종가 사용:** 본 시뮬레이터는 배당 수익 이중 계산 방지를 위해 수정주가(Adj Close)가 아닌 **실제 거래된 일별 종가(Close)**를 기준으로 단가를 계산합니다.
     * **배당 기준 시점:** 배당락일(Ex-Dividend Date)에 권리를 획득하며, **실제 현금 입금 및 재투자는 4일 뒤(영업일 기준 보정)**에 이루어집니다.
-    * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일이 도래하면, 당일 종가에 A종목을 전량 매도하고 B종목으로 교차 매수합니다.
+    * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수합니다.
     """)
 
     with st.expander("🔍 종목 코드를 모르시나요? (국내/해외 종목 검색 및 추가)", expanded=False):
@@ -182,36 +184,26 @@ if st.session_state.show_settings:
         with col1:
             cash_input = st.text_input("초기 총 투자금 (원)", key="saved_cash", placeholder="5,000,000", on_change=trigger_simulation)
             period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", key="saved_period", placeholder="2025.1~2026.4", on_change=trigger_simulation)
-            div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True, key="saved_div_action")
-
         with col2:
             etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", key="saved_etf", placeholder="498400, 472150, 498400 + 472150", on_change=trigger_simulation)
-            
-            raw_target_strs = [t.strip().upper() for t in etf_input.split(',') if t.strip()]
-            is_single_windmill_ui = len(raw_target_strs) == 1 and '+' in raw_target_strs[0]
-            
-            # 💡 [핵심 추가] 단독 풍차 여부에 따라 선택창(UI) 다르게 렌더링
-            strat_wm_default = st.session_state.last_inputs.get('strat_wm', ["일괄 매수"])
-            strat_default = st.session_state.last_inputs.get('strat', ["거치식 (일괄 매수)"])
+            div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True, key="saved_div_action")
 
-            if is_single_windmill_ui:
-                valid_wm = [s for s in strat_wm_default if s in ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"]]
-                strategy_options_wm = st.multiselect(
-                    "배당풍차 매수 방식 (복수 선택하여 차트 비교 가능)",
-                    ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"],
-                    default=valid_wm if valid_wm else ["일괄 매수"]
-                )
-                strategy_options = []
-            else:
-                valid_s = [s for s in strat_default if s in ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"]]
-                is_windmill_mixed = any('+' in t for t in raw_target_strs)
-                strategy_options = st.multiselect(
-                    "분할 매수 방식 (단일 종목 전용, 풍차 섞일 시 비활성)",
-                    ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
-                    default=valid_s if valid_s else ["거치식 (일괄 매수)"],
-                    disabled=is_windmill_mixed
-                )
-                strategy_options_wm = []
+        st.divider() # 💡 깔끔한 시각적 분리를 위한 구분선 추가
+        
+        # 💡 [핵심 수정] 매수 방식 설정 창을 하단으로 완전히 분리
+        col3, col4 = st.columns(2)
+        with col3:
+            strategy_options = st.multiselect(
+                "단일 종목 매수 방식 (복수 선택 가능)",
+                ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
+                key="saved_strategy"
+            )
+        with col4:
+            strategy_options_wm = st.multiselect(
+                "배당풍차 매수 방식 (복수 선택 가능)",
+                ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"],
+                key="saved_strategy_wm"
+            )
             
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
         
@@ -246,13 +238,13 @@ if st.session_state.show_settings:
             'etf': etf_input, 'strat': strategy_options, 'strat_wm': strategy_options_wm
         }
 
-        with st.spinner('배당풍차(분할매수) 및 주가 데이터를 통합 분석 중...'):
+        with st.spinner('배당풍차 및 주가 데이터를 통합 분석 중...'):
             safe_cash = cash_input if cash_input and cash_input.strip() else "5000000"
             clean_cash = re.sub(r'[^0-9.]', '', safe_cash)
             INITIAL_CASH = float(clean_cash) if clean_cash else 5000000.0
             
             safe_period = period_input if period_input and period_input.strip() else "2025.1~2026.4"
-            safe_etf = etf_input if etf_input and etf_input.strip() else "498400 + 472150"
+            safe_etf = etf_input if etf_input and etf_input.strip() else "498400, 472150, 498400 + 472150"
             
             try:
                 if '~' in safe_period:
@@ -273,27 +265,21 @@ if st.session_state.show_settings:
             targets = []
             compare_keys = [] 
             
-            is_single_windmill = len(raw_target_strs) == 1 and '+' in raw_target_strs[0]
-            
-            # 💡 [핵심 수정] 타겟 생성 로직 분기: 단일 풍차면 선택된 N분할 방식을 개별 타겟으로 생성
-            if is_single_windmill:
-                t = raw_target_strs[0]
-                for strat in strategy_options_wm:
-                    key = f"{t}_{strat}"
-                    targets.append({'key': key, 'ticker': t, 'strategy': strat, 'name': f"풍차({t}) - {strat}"})
-                    compare_keys.append(key)
-            elif not any('+' in t for t in raw_target_strs):
-                strats = strategy_options if strategy_options else ["거치식 (일괄 매수)"]
-                for t in raw_target_strs:
-                    for strat in strats:
+            strats_single = strategy_options if strategy_options else ["거치식 (일괄 매수)"]
+            strats_wm = strategy_options_wm if strategy_options_wm else ["일괄 매수"]
+
+            # 💡 [핵심 수정] 섞어서 입력된 종목 코드를 알아서 분리하여 해당하는 전략 필터를 적용
+            for t in raw_target_strs:
+                if '+' in t:
+                    for strat in strats_wm:
+                        key = f"{t}_{strat}"
+                        targets.append({'key': key, 'ticker': t, 'strategy': strat, 'name': f"풍차({t}) - {strat}"})
+                        compare_keys.append(key)
+                else:
+                    for strat in strats_single:
                         key = f"{t}_{strat}"
                         targets.append({'key': key, 'ticker': t, 'strategy': strat, 'name': f"{get_stock_info(t)} ({strat})"})
                         compare_keys.append(key)
-            else:
-                for t in raw_target_strs:
-                    name = f"배당풍차 ({t})" if '+' in t else f"{get_stock_info(t)}"
-                    targets.append({'key': t, 'ticker': t, 'strategy': "거치식 (일괄 매수)", 'name': name})
-                    compare_keys.append(t)
 
             all_tickers_needed = set()
             for target in targets:
@@ -326,7 +312,6 @@ if st.session_state.show_settings:
                 is_windmill = len(t_tickers) > 1
                 strat = target['strategy']
                 
-                # 풍차 분할 모드인지 식별
                 is_windmill_split = is_windmill and strat in ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"]
                 
                 if any(tk not in processed_data for tk in t_tickers): continue
@@ -335,7 +320,7 @@ if st.session_state.show_settings:
                     if "4분할" in strat: N_splits = 4
                     elif "6분할" in strat: N_splits = 6
                     else: N_splits = 1
-                    invest_dates_set = set() # 정기투자는 무시
+                    invest_dates_set = set() 
                 else:
                     N_splits = 1
                     if strat == "거치식 (일괄 매수)": invest_dates_set = {all_trading_dates[0]}
@@ -347,7 +332,7 @@ if st.session_state.show_settings:
                 
                 reserve_cash = 0.0 if is_windmill_split else INITIAL_CASH
                 available_cash = 0.0
-                staged_cash = INITIAL_CASH if is_windmill_split else 0.0 # 💡 분할매수용 대기 자금
+                staged_cash = INITIAL_CASH if is_windmill_split else 0.0 
                 
                 total_shares = 0
                 total_withdrawn, total_dividend = 0.0, 0.0 
@@ -360,7 +345,6 @@ if st.session_state.show_settings:
                 pending_dividends = {}
                 scheduled_buys = {}
 
-                # 💡 [핵심 함수] 잔여 대기 자금(staged_cash)을 D-1에 맞춰 균등 분할 스케줄링
                 def schedule_buys(amount, from_idx, target_tk, n_split):
                     if amount <= 0: return
                     if n_split == 1:
@@ -374,7 +358,7 @@ if st.session_state.show_settings:
                     if len(future_div_dates) > 0:
                         target_date = future_div_dates[0]
                         target_idx = all_trading_dates.index(target_date)
-                        end_idx = max(from_idx, target_idx - 1) # 배당락일 D-1까지만 매수
+                        end_idx = max(from_idx, target_idx - 1) 
                     else:
                         end_idx = min(len(all_trading_dates)-1, from_idx + 20)
                         
@@ -387,7 +371,6 @@ if st.session_state.show_settings:
                             idx = from_idx + int(round(i * step))
                             scheduled_buys[all_trading_dates[idx]] = scheduled_buys.get(all_trading_dates[idx], 0.0) + cash_per
 
-                # 초기 1회차 자본 스케줄링
                 if is_windmill_split:
                     schedule_buys(INITIAL_CASH, 0, current_ticker, N_splits)
 
@@ -399,7 +382,6 @@ if st.session_state.show_settings:
                     if month_str not in monthly_data:
                         monthly_data[month_str] = {'div_per_share': 0.0, 'div_total': 0.0, 'end_asset': 0.0, 'end_price': 0.0}
 
-                    # 배당금 발생 및 +4일 입금 스케줄링
                     div = processed_data[current_ticker][1][date]
                     if div > 0 and total_shares > 0:
                         div_amount = total_shares * float(div)
@@ -418,7 +400,6 @@ if st.session_state.show_settings:
                         })
                         if is_windmill: windmill_swap_flag = True
 
-                    # 배당금 실제 입금 처리
                     if date in pending_dividends:
                         for p_div in pending_dividends[date]:
                             amt = p_div['amount']
@@ -446,7 +427,6 @@ if st.session_state.show_settings:
                         reserve_cash -= installment
                         available_cash += installment
 
-                    # 풍차 교차 매매 (전량 매도 후 다음 타겟 스케줄링)
                     if windmill_swap_flag:
                         sell_amount = total_shares * price
                         history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '풍차매도', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': sell_amount, '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
@@ -465,7 +445,6 @@ if st.session_state.show_settings:
                             
                         windmill_swap_flag = False
 
-                    # 예약된 분할 매수 또는 일반 매수 실행
                     if is_windmill_split:
                         if date in scheduled_buys:
                             buy_cash = min(scheduled_buys[date], staged_cash)
