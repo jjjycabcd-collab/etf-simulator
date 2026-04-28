@@ -112,14 +112,12 @@ def fetch_prices_and_dividends(code, start_date, end_date):
         return pd.Series(dtype=float), pd.Series(dtype=float)
 
 def add_ticker_to_input():
-    """자동완성 검색창에서 종목 선택 시 입력창에 자동 추가하는 콜백"""
+    """자동완성 검색창에서 종목 선택 시 입력창에 실시간 반영하는 콜백"""
     sel = st.session_state.auto_search
     if sel:
-        # "삼성전자 (005930)" 형태에서 괄호 안의 코드만 추출
         code = sel.split('(')[-1].replace(')', '').strip()
-        current_str = st.session_state.saved_etf
+        current_str = st.session_state.saved_etf  # 입력창과 실시간 동기화된 데이터 읽기
         
-        # 콤마 기준으로 쪼개서 현재 등록된 종목 개수 확인
         items = [i.strip() for i in current_str.split(',') if i.strip()]
         
         if len(items) >= 4:
@@ -130,7 +128,6 @@ def add_ticker_to_input():
             else:
                 st.session_state.saved_etf = code
         
-        # 선택 후에는 다시 빈 검색창으로 리셋
         st.session_state.auto_search = None
 
 # ==========================================
@@ -151,11 +148,9 @@ if st.session_state.show_settings:
     * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수하여 배당 주기를 극대화합니다.
     """)
 
-    # 💡 [새롭게 적용된 자동완성 콤보박스 영역]
     with st.expander("🔍 종목 코드를 모르시나요? (자동완성 검색 및 추가)", expanded=False):
         st.markdown("👇 **아래 입력창을 클릭하고 종목명(예: 삼성전자)을 입력하세요. 선택하면 폼에 자동으로 코드가 추가됩니다.**")
         
-        # 마스터 데이터에서 선택용 리스트 생성
         search_options = [f"{name} ({code})" for code, name in ALL_TICKERS.items()]
         
         st.selectbox(
@@ -170,32 +165,24 @@ if st.session_state.show_settings:
     with st.container(border=True):
         st.subheader("⚙️ 테스트 환경")
         
-        with st.form("settings_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                cash_input = st.text_input("초기 총 투자금 (원)", value=st.session_state.saved_cash)
-                period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", value=st.session_state.saved_period)
-                div_idx = 0 if st.session_state.saved_div_action == "재투자" else 1
-                div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], index=div_idx, horizontal=True)
+        # 💡 form을 제거하고 실시간 key 바인딩 방식으로 변경
+        col1, col2 = st.columns(2)
+        with col1:
+            cash_input = st.text_input("초기 총 투자금 (원)", key="saved_cash")
+            period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", key="saved_period")
+            div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True, key="saved_div_action")
 
-            with col2:
-                # 위젯에 입력된 텍스트가 위쪽 콤보박스 콜백과 실시간 연동됩니다.
-                etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", value=st.session_state.saved_etf)
-                strategy_options = st.multiselect(
-                    "분할 매수 방식 (단일 종목 시 적용)",
-                    ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
-                    default=st.session_state.saved_strategy
-                )
-                
-            run_btn = st.form_submit_button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
+        with col2:
+            etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", key="saved_etf")
+            strategy_options = st.multiselect(
+                "분할 매수 방식 (단일 종목 시 적용)",
+                ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
+                key="saved_strategy"
+            )
+            
+        run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
 
     if run_btn:
-        st.session_state.saved_cash = cash_input
-        st.session_state.saved_period = period_input
-        st.session_state.saved_div_action = div_action_input
-        st.session_state.saved_etf = etf_input
-        st.session_state.saved_strategy = strategy_options
-
         with st.spinner('배당풍차 및 주가 데이터를 통합 분석 중...'):
             INITIAL_CASH = float(re.sub(r'[^0-9.]', '', cash_input))
             
@@ -345,7 +332,7 @@ if st.session_state.show_settings:
                 final_eval_asset = float(reserve_cash + available_cash + (total_shares * last_price))
                 history.append({'날짜': last_date.strftime('%Y/%m/%d'), '구분': '최종평가', '종목': current_ticker, '단가': last_price, '수량': int(total_shares), '거래금액': 0.0, '현금잔고': float(reserve_cash + available_cash), '총자산': final_eval_asset})
 
-                monthly_list, prev_m_asset = INITIAL_CASH
+                monthly_list, prev_m_asset = [], INITIAL_CASH
                 for m_str in sorted(monthly_data.keys()):
                     m_data = monthly_data[m_str]
                     div_yield = (m_data['div_per_share'] / m_data['end_price'] * 100) if m_data['end_price'] > 0 else 0.0
