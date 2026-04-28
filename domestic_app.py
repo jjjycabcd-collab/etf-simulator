@@ -20,6 +20,8 @@ if 'run_clicked' not in st.session_state:
     st.session_state.run_clicked = False
 if 'sim_result_data' not in st.session_state:
     st.session_state.sim_result_data = None
+if 'do_run' not in st.session_state:
+    st.session_state.do_run = False
 
 # --- 입력값 유지를 위한 세션 상태 초기화 ---
 if 'last_inputs' not in st.session_state:
@@ -40,14 +42,13 @@ if 'saved_strategy' not in st.session_state: st.session_state.saved_strategy = s
 # ==========================================
 # 종목 데이터 마스터 적재 (캐싱)
 # ==========================================
-@st.cache_data(ttl=86400) # 24시간 동안 메모리에 저장
+@st.cache_data(ttl=86400)
 def load_all_tickers():
     """국내 상장 주식 및 ETF 전체 목록 수집"""
     tickers = {}
-    
     try:
         url = "http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(url, headers=headers, timeout=5)
         df_list = pd.read_html(io.StringIO(res.text), header=0)
         if df_list:
@@ -56,18 +57,17 @@ def load_all_tickers():
                 code = str(row['종목코드']).zfill(6)
                 tickers[code] = row['회사명']
     except Exception:
-        fallback = {"005930": "삼성전자", "000660": "SK하이닉스", "035420": "NAVER", "035720": "카카오", "005380": "현대차"}
+        fallback = {"005930": "삼성전자", "000660": "SK하이닉스"}
         tickers.update(fallback)
 
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get("https://finance.naver.com/api/sise/etfItemList.nhn", headers=headers, timeout=5)
         if res.status_code == 200:
             for item in res.json().get('result', {}).get('etfItemList', []):
                 tickers[item['itemcode']] = item['itemname']
     except Exception:
         pass
-        
     return tickers
 
 ALL_TICKERS = load_all_tickers()
@@ -77,10 +77,8 @@ ALL_TICKERS = load_all_tickers()
 # ==========================================
 @st.cache_data(ttl=86400)
 def get_stock_info(code):
-    """종목명 가져오기"""
     if not code: return ""
-    if code in ALL_TICKERS:
-        return f"{ALL_TICKERS[code]}({code})"
+    if code in ALL_TICKERS: return f"{ALL_TICKERS[code]}({code})"
     try:
         check_code = f"{code}.KS" if code.isdigit() else code
         ticker = yf.Ticker(check_code)
@@ -94,43 +92,32 @@ def get_stock_info(code):
         return code.upper()
 
 def fetch_prices_and_dividends(code, start_date, end_date):
-    """가격 및 배당 데이터 수집"""
     try:
         ticker_code = f"{code}.KS" if code.isdigit() else code
         ticker = yf.Ticker(ticker_code)
         df = ticker.history(start=start_date, end=end_date, auto_adjust=False)
-        
         if df.empty and code.isdigit():
             ticker_code = f"{code}.KQ"
             ticker = yf.Ticker(ticker_code)
             df = ticker.history(start=start_date, end=end_date, auto_adjust=False)
-            
-        if df.empty: 
-            return pd.Series(dtype=float), pd.Series(dtype=float)
-            
+        if df.empty: return pd.Series(dtype=float), pd.Series(dtype=float)
         df.index = pd.to_datetime(df.index).tz_localize(None)
         return df['Close'].dropna(), df['Dividends'].replace(0, pd.NA).dropna()
     except:
         return pd.Series(dtype=float), pd.Series(dtype=float)
 
-def add_ticker_to_input():
-    """자동완성 검색창에서 종목 선택 시 입력창에 실시간 반영하는 콜백"""
-    sel = st.session_state.auto_search
-    if sel:
-        code = sel.split('(')[-1].replace(')', '').strip()
-        current_str = st.session_state.saved_etf  
-        
-        items = [i.strip() for i in current_str.split(',') if i.strip()]
-        
-        if len(items) >= 4:
-            st.toast("⚠️ 최대 4종목까지만 추가할 수 있습니다.", icon="⚠️")
-        else:
-            if current_str.strip():
-                st.session_state.saved_etf = current_str + f", {code}"
-            else:
-                st.session_state.saved_etf = code
-        
-        st.session_state.auto_search = None
+# 💡 [핵심 추가 1] 검색된 종목을 설정창에 추가하는 콜백 함수
+def append_to_etf_input(code):
+    current_str = st.session_state.saved_etf
+    items = [i.strip() for i in current_str.split(',') if i.strip()]
+    if len(items) >= 4:
+        st.toast("⚠️ 최대 4종목까지만 추가할 수 있습니다.", icon="⚠️")
+    else:
+        st.session_state.saved_etf = current_str + f", {code}" if current_str.strip() else code
+
+# 💡 [핵심 추가 2] 텍스트 입력창에서 엔터 입력 시 실행을 트리거하는 콜백 함수
+def trigger_simulation():
+    st.session_state.do_run = True
 
 # ==========================================
 # UI 영역
@@ -150,35 +137,69 @@ if st.session_state.show_settings:
     * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수하여 배당 주기를 극대화합니다.
     """)
 
-    with st.expander("🔍 종목 코드를 모르시나요? (자동완성 검색 및 추가)", expanded=False):
-        st.markdown("👇 **아래 입력창을 클릭하고 종목명(예: 삼성전자)을 입력하세요. 선택하면 폼에 자동으로 코드가 추가됩니다.**")
+    # 💡 [핵심 수정] 야후 파이낸스를 포함한 실시간 검색 및 추가 UI로 원복
+    with st.expander("🔍 종목 코드를 모르시나요? (국내/해외 종목 검색 및 추가)", expanded=False):
+        st.markdown("👇 **찾고 싶은 종목명이나 티커(예: QQQ, 삼성전자)를 입력하고 엔터를 치세요.**")
+        search_kw = st.text_input("종목 검색어 입력 (입력 후 엔터)", key="search_input_kw")
         
-        search_options = [f"{name} ({code})" for code, name in ALL_TICKERS.items()]
-        
-        st.selectbox(
-            "종목 검색 (선택 시 자동 추가됨)",
-            options=search_options,
-            index=None,
-            placeholder="여기를 클릭하여 종목명이나 코드를 입력하세요...",
-            key="auto_search",
-            on_change=add_ticker_to_input
-        )
+        if search_kw:
+            with st.spinner("검색 중..."):
+                search_kw_clean = search_kw.replace(" ", "").lower()
+                matches = []
+                
+                # 1. 국내 데이터 검색
+                for code, name in ALL_TICKERS.items():
+                    if search_kw_clean in name.replace(" ", "").lower() or search_kw_clean == code.lower():
+                        matches.append((code, name))
+                        
+                # 2. 야후 파이낸스 해외 검색
+                try:
+                    yf_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={search_kw}&quotesCount=5&newsCount=0"
+                    yf_headers = {'User-Agent': 'Mozilla/5.0'}
+                    yf_res = requests.get(yf_url, headers=yf_headers, timeout=3)
+                    if yf_res.status_code == 200:
+                        for quote in yf_res.json().get('quotes', []):
+                            sym = quote.get('symbol')
+                            sname = quote.get('shortname', sym)
+                            if sym and not sym.endswith('.KS') and not sym.endswith('.KQ'):
+                                matches.append((sym, f"[해외] {sname}"))
+                except:
+                    pass
+                
+                def sort_key(x):
+                    c, n = x
+                    clean_n = n.replace(" ", "").replace("[해외]", "").strip().lower()
+                    exact_match = 0 if clean_n == search_kw_clean or c.lower() == search_kw_clean else 1
+                    return (exact_match, len(n), n)
+                    
+                matches.sort(key=sort_key)
+                final_results = matches[:7]
+                
+                if final_results:
+                    st.markdown("##### 💡 검색 결과 (오른쪽 버튼을 누르면 자동으로 폼에 추가됩니다)")
+                    for code, name in final_results:
+                        col_a, col_b = st.columns([5, 1])
+                        with col_a:
+                            st.write(f"**{name}** (`{code}`)")
+                        with col_b:
+                            st.button("➕ 추가", key=f"add_btn_{code}", on_click=append_to_etf_input, args=(code,))
+                else:
+                    st.warning("검색 결과가 없습니다.")
 
     with st.container(border=True):
         st.subheader("⚙️ 테스트 환경")
         
         col1, col2 = st.columns(2)
         with col1:
-            cash_input = st.text_input("초기 총 투자금 (원)", key="saved_cash", placeholder="5,000,000")
-            period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", key="saved_period", placeholder="2025.1~2026.4")
+            # 💡 [핵심 수정] on_change 콜백을 통해 엔터키 입력 시 시뮬레이션 실행
+            cash_input = st.text_input("초기 총 투자금 (원)", key="saved_cash", placeholder="5,000,000", on_change=trigger_simulation)
+            period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", key="saved_period", placeholder="2025.1~2026.4", on_change=trigger_simulation)
             div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True, key="saved_div_action")
 
         with col2:
-            etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", key="saved_etf", placeholder="498400, 472150, 498400 + 472150")
+            etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", key="saved_etf", placeholder="498400, 472150, 498400 + 472150", on_change=trigger_simulation)
             
-            # 💡 [핵심 수정] 텍스트 입력창에 '+'가 있으면 분할 매수 옵션을 회색으로 비활성화시킴
             is_windmill_mode = '+' in etf_input
-            
             strategy_options = st.multiselect(
                 "분할 매수 방식 (배당풍차 포함 시 선택 불가)",
                 ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
@@ -188,7 +209,10 @@ if st.session_state.show_settings:
             
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
 
-    if run_btn:
+    # 💡 [핵심 수정] 엔터를 치거나 (do_run == True) 버튼을 눌렀을 때 모두 실행
+    if run_btn or st.session_state.do_run:
+        st.session_state.do_run = False  # 무한 반복 방지를 위해 초기화
+        
         st.session_state.last_inputs = {
             'cash': cash_input,
             'period': period_input,
@@ -224,11 +248,9 @@ if st.session_state.show_settings:
             targets = []
             compare_keys = [] 
             
-            # 💡 [핵심 수정] 타겟 생성 로직 분기: 입력된 종목 중 풍차가 하나라도 있는지 확인
             has_windmill = any('+' in t for t in raw_target_strs)
             
             if not has_windmill:
-                # 풍차가 아예 없다면 다중 종목이더라도 각각의 분할 매수 전략을 모두 교차 생성
                 strats = strategy_options if strategy_options else ["거치식 (일괄 매수)"]
                 for t in raw_target_strs:
                     for strat in strats:
@@ -236,7 +258,6 @@ if st.session_state.show_settings:
                         targets.append({'key': key, 'ticker': t, 'strategy': strat, 'name': f"{get_stock_info(t)} ({strat})"})
                         compare_keys.append(key)
             else:
-                # 풍차가 하나라도 섞여 있다면 분할 매수 무시하고 모두 '거치식'으로 일괄 처리
                 for t in raw_target_strs:
                     name = f"배당풍차 ({t})" if '+' in t else f"{get_stock_info(t)}"
                     targets.append({'key': t, 'ticker': t, 'strategy': "거치식 (일괄 매수)", 'name': name})
@@ -377,10 +398,7 @@ if st.session_state.show_settings:
 if st.session_state.run_clicked and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
     datasets = []
-    
-    # 💡 [핵심 수정] 다중 종목 + 다중 매수 방식일 때 라인이 많아질 것을 대비해 차트 색상 팔레트 10개로 확장
     colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16', '#6366f1', '#14b8a6']
-    
     for idx, k in enumerate(res['compare_keys']):
         d = res['all_data'][k]
         datasets.append({'label': d['name'], 'data': d['chart_values'], 'borderColor': colors[idx % len(colors)], 'tension': 0.3, 'fill': False})
