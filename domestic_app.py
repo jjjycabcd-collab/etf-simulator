@@ -31,7 +31,7 @@ if 'last_inputs' not in st.session_state:
         'div': "재투자",
         'etf': "498400, 472150, 498400 + 472150",
         'strat': ["거치식 (일괄 매수)"],
-        'strat_wm': ["일괄 매수"]
+        'strat_wm': ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"]
     }
 
 if 'saved_cash' not in st.session_state: st.session_state.saved_cash = st.session_state.last_inputs['cash']
@@ -114,6 +114,9 @@ def append_to_etf_input(code):
     else:
         st.session_state.saved_etf = current_str + f", {code}" if current_str.strip() else code
 
+def trigger_simulation():
+    st.session_state.do_run = True
+
 # ==========================================
 # UI 영역
 # ==========================================
@@ -127,9 +130,9 @@ if st.session_state.show_settings:
 
     st.info("""
     💡 **참고사항 (데이터 한계 및 기준)**
-    * **순수 종가 사용:** 본 시뮬레이터는 배당 수익 이중 계산 방지를 위해 수정주가(Adj Close)가 아닌 **실제 거래된 일별 종가(Close)**를 기준으로 단가를 계산합니다.
-    * **배당 기준 시점:** 배당락일(Ex-Dividend Date)에 권리를 획득하며, **실제 현금 입금 및 재투자는 4일 뒤(영업일 기준 보정)**에 이루어집니다.
-    * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다.
+    * **순수 종가 사용:** 수정주가가 아닌 **실제 거래된 일별 종가(Close)**를 기준으로 계산합니다.
+    * **배당 기준 시점:** 배당락일(Ex-Dividend Date)에 권리를 획득하며, **실제 현금 입금은 4일 뒤**에 이루어집니다.
+    * **풍차 매도 시점:** 배당락일 당일이 아닌 **배당락일 다음 거래일**에 전량 매도 후 다음 종목으로 교체합니다.
     """)
 
     with st.expander("🔍 종목 코드를 모르시나요? (국내/해외 종목 검색 및 추가)", expanded=False):
@@ -297,9 +300,7 @@ if st.session_state.show_settings:
             processed_data = {tk: (p.reindex(all_trading_dates).ffill(), d.reindex(all_trading_dates).fillna(0.0)) for tk, (p, d) in target_raw_data.items()}
 
             temp_s = pd.Series(index=all_trading_dates, data=range(len(all_trading_dates)))
-            eow_dates_set = set(temp_s.groupby([temp_s.index.isocalendar().year, temp_s.index.isocalendar().week]).tail(1).index)
-            eom_dates_set = set(temp_s.groupby([temp_s.index.year, temp_s.index.month]).tail(1).index)
-            chart_labels = sorted([d.strftime('%Y/%m/%d') for d in eow_dates_set])
+            chart_labels = sorted([d.strftime('%Y/%m/%d') for d in temp_s.groupby([temp_s.index.isocalendar().year, temp_s.index.isocalendar().week]).tail(1).index])
 
             all_sim_data = {}
 
@@ -325,16 +326,13 @@ if st.session_state.show_settings:
                     elif strat == "적립식 (매주)": invest_dates_set = set(temp_s.groupby([temp_s.index.isocalendar().year, temp_s.index.isocalendar().week]).head(1).index)
                     else: invest_dates_set = set(temp_s.groupby([temp_s.index.year, temp_s.index.month]).head(1).index)
 
-                installment = INITIAL_CASH / len(invest_dates_set) if len(invest_dates_set) > 0 else 0
                 reserve_cash, available_cash, staged_cash = (0.0, 0.0, INITIAL_CASH) if is_windmill_split else (INITIAL_CASH, 0.0, 0.0)
-                
                 total_shares, total_withdrawn, total_dividend = 0, 0.0, 0.0 
                 history, summary, asset_by_date, monthly_data = [], [], {}, {}
                 prev_asset = INITIAL_CASH
-                reinvest_flag, windmill_swap_flag = False, False
+                reinvest_flag, windmill_swap_pending = False, False
                 current_idx = 0
                 current_ticker = t_tickers[current_idx]
-                
                 pending_dividends, scheduled_buys = {}, {}
 
                 def schedule_buys(amount, from_idx, target_tk, n_split):
@@ -358,8 +356,7 @@ if st.session_state.show_settings:
                         cash_per = amount / n_split
                         for i in range(n_split):
                             idx = end_idx if i == n_split - 1 else from_idx + int(round(i * step))
-                            buy_date = all_trading_dates[idx]
-                            scheduled_buys[buy_date] = scheduled_buys.get(buy_date, 0.0) + cash_per
+                            scheduled_buys[all_trading_dates[idx]] = scheduled_buys.get(all_trading_dates[idx], 0.0) + cash_per
 
                 if is_windmill_split: schedule_buys(INITIAL_CASH, 0, current_ticker, N_splits)
 
@@ -371,6 +368,23 @@ if st.session_state.show_settings:
                     if month_str not in monthly_data:
                         monthly_data[month_str] = {'div_per_share': 0.0, 'div_total': 0.0, 'end_asset': 0.0, 'end_price': 0.0}
 
+                    # 💡 [풍차 핵심 수정] 매도 시점을 배당락일 다음 거래일로 지연
+                    if windmill_swap_pending:
+                        sell_amount = total_shares * price
+                        history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '풍차매도', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': sell_amount, '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
+                        total_shares = 0
+                        current_idx = (current_idx + 1) % len(t_tickers)
+                        current_ticker = t_tickers[current_idx]
+                        price = processed_data[current_ticker][0][date] 
+                        if is_windmill_split:
+                            staged_cash += sell_amount
+                            schedule_buys(staged_cash, d_idx, current_ticker, N_splits)
+                        else:
+                            available_cash += sell_amount
+                            reinvest_flag = True
+                        windmill_swap_pending = False
+
+                    # 배당락일 (권리 획득)
                     div = processed_data[current_ticker][1][date]
                     if div > 0 and total_shares > 0:
                         div_amount = total_shares * float(div)
@@ -384,8 +398,10 @@ if st.session_state.show_settings:
                         pending_dividends[actual_payout_date].append({
                             'amount': div_amount, 'ticker': current_ticker, 'div_per_share': float(div), 'shares': int(total_shares)
                         })
-                        if is_windmill: windmill_swap_flag = True
+                        # 💡 다음 거래일에 매도하도록 예약
+                        if is_windmill: windmill_swap_pending = True
 
+                    # 배당금 실제 입금 처리 (+4일)
                     if date in pending_dividends:
                         for p_div in pending_dividends[date]:
                             amt = p_div['amount']
@@ -405,25 +421,10 @@ if st.session_state.show_settings:
                                 '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))
                             })
 
-                    is_invest_day = date in invest_dates_set
-                    if not is_windmill_split and is_invest_day:
-                        reserve_cash -= installment
-                        available_cash += installment
-
-                    if windmill_swap_flag:
-                        sell_amount = total_shares * price
-                        history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '풍차매도', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': sell_amount, '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
-                        total_shares = 0
-                        current_idx = (current_idx + 1) % len(t_tickers)
-                        current_ticker = t_tickers[current_idx]
-                        price = processed_data[current_ticker][0][date] 
-                        if is_windmill_split:
-                            staged_cash += sell_amount
-                            schedule_buys(staged_cash, d_idx, current_ticker, N_splits)
-                        else:
-                            available_cash += sell_amount
-                            reinvest_flag = True
-                        windmill_swap_flag = False
+                    # 매수 처리
+                    if not is_windmill_split and date in invest_dates_set:
+                        reserve_cash -= (INITIAL_CASH / len(invest_dates_set))
+                        available_cash += (INITIAL_CASH / len(invest_dates_set))
 
                     if is_windmill_split:
                         if date in scheduled_buys:
@@ -437,35 +438,28 @@ if st.session_state.show_settings:
                                     gubun_text = f'매수({N_splits}분할)' if N_splits > 1 else '일괄매수'
                                     history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))})
                     else:
-                        if is_invest_day or reinvest_flag:
-                            if not pd.isna(price) and available_cash >= price:
-                                shares_to_buy = int(available_cash // price)
-                                if shares_to_buy > 0:
-                                    cost = shares_to_buy * price
-                                    available_cash -= cost
-                                    total_shares += shares_to_buy
-                                    gubun_text = '매수'
-                                    if reinvest_flag and not is_invest_day: gubun_text = '풍차매수' if is_windmill else '배당재투자'
-                                    elif reinvest_flag and is_invest_day: gubun_text = '매수+풍차' if is_windmill else '매수+재투자'
-                                    history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash), '총자산': float(reserve_cash + available_cash + (total_shares * price))})
-                            reinvest_flag = False
+                        if (date in invest_dates_set or reinvest_flag) and not pd.isna(price) and available_cash >= price:
+                            shares_to_buy = int(available_cash // price)
+                            if shares_to_buy > 0:
+                                cost = shares_to_buy * price
+                                available_cash -= cost
+                                total_shares += shares_to_buy
+                                gubun_text = '매수'
+                                if reinvest_flag and date not in invest_dates_set: gubun_text = '배당재투자'
+                                elif reinvest_flag and date in invest_dates_set: gubun_text = '매수+재투자'
+                                history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash), '총자산': float(reserve_cash + available_cash + (total_shares * price))})
+                        reinvest_flag = False
                     
                     cur_asset = float(reserve_cash + available_cash + staged_cash + (total_shares * price))
-                    if date in eom_dates_set and date != all_trading_dates[-1]:
-                        history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '월말평가', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': 0.0, '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': cur_asset})
-                    
                     monthly_data[month_str]['end_asset'] = cur_asset
                     monthly_data[month_str]['end_price'] = float(price)
-                    label = date.strftime('%Y/%m/%d')
-                    if label in chart_labels:
-                        asset_by_date[label] = cur_asset
-                        summary.append({'기간': label, '기말단가': float(price), '기말자산': cur_asset, '증감': float(cur_asset - prev_asset), '수익률': float(((cur_asset / INITIAL_CASH) - 1) * 100)})
+                    if date.strftime('%Y/%m/%d') in chart_labels:
+                        asset_by_date[date.strftime('%Y/%m/%d')] = cur_asset
+                        summary.append({'기간': date.strftime('%Y/%m/%d'), '기말단가': float(price), '기말자산': cur_asset, '증감': float(cur_asset - prev_asset), '수익률': float(((cur_asset / INITIAL_CASH) - 1) * 100)})
                         prev_asset = cur_asset
 
-                last_date = all_trading_dates[-1]
-                last_price = float(processed_data[current_ticker][0][last_date])
-                final_eval_asset = float(reserve_cash + available_cash + staged_cash + (total_shares * last_price))
-                history.append({'날짜': last_date.strftime('%Y/%m/%d'), '구분': '최종평가', '종목': current_ticker, '단가': last_price, '수량': int(total_shares), '거래금액': 0.0, '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': final_eval_asset})
+                last_eval_asset = float(reserve_cash + available_cash + staged_cash + (total_shares * float(processed_data[current_ticker][0][all_trading_dates[-1]])))
+                history.append({'날짜': all_trading_dates[-1].strftime('%Y/%m/%d'), '구분': '최종평가', '종목': current_ticker, '단가': float(processed_data[current_ticker][0][all_trading_dates[-1]]), '수량': int(total_shares), '거래금액': 0.0, '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': last_eval_asset})
 
                 monthly_list, prev_m_asset = [], INITIAL_CASH
                 for m_str in sorted(monthly_data.keys()):
@@ -474,30 +468,23 @@ if st.session_state.show_settings:
                     monthly_list.append({'기간': m_str, '주당배당': m_data['div_per_share'], '배당률': div_yield, '배당합계': m_data['div_total'], '기말자산': m_data['end_asset'], '증감': m_data['end_asset'] - prev_m_asset})
                     prev_m_asset = m_data['end_asset']
                 
-                real_total_asset = final_eval_asset + total_withdrawn
-                all_sim_data[t_key] = {'name': target['name'], 'summary': summary, 'history': history, 'monthly_summary': monthly_list, 'chart_values': [asset_by_date.get(lbl, INITIAL_CASH) for lbl in chart_labels], 'final_asset': final_eval_asset, 'div_action': div_action_input, 'initial_cash': INITIAL_CASH, 'total_dividend': total_dividend, 'total_withdrawn': total_withdrawn, 'total_profit': real_total_asset - INITIAL_CASH, 'profit_rate': ((real_total_asset / INITIAL_CASH) - 1) * 100}
+                real_total_asset = last_eval_asset + total_withdrawn
+                all_sim_data[t_key] = {'name': target['name'], 'summary': summary, 'history': history, 'monthly_summary': monthly_list, 'chart_values': [asset_by_date.get(lbl, INITIAL_CASH) for lbl in chart_labels], 'final_asset': last_eval_asset, 'div_action': div_action_input, 'initial_cash': INITIAL_CASH, 'total_dividend': total_dividend, 'total_withdrawn': total_withdrawn, 'total_profit': real_total_asset - INITIAL_CASH, 'profit_rate': ((real_total_asset / INITIAL_CASH) - 1) * 100}
 
             st.session_state.sim_result_data = {'initial_cash': INITIAL_CASH, 'compare_keys': [k for k in compare_keys if k in all_sim_data], 'labels': chart_labels, 'all_data': all_sim_data}
             st.session_state.run_clicked, st.session_state.show_settings = True, False
             st.rerun()
 
 # ==========================================
-# 결과 출력 영역
+# 결과 출력 영역 (UI 스타일 및 스크립트)
 # ==========================================
 if st.session_state.run_clicked and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
     datasets = []
-    # 💡 [핵심 수정] 파스텔톤이지만 농도를 높여 차트가 더 진하게 보이도록 조정 (Deep Muted Tones)
     colors = ['#C62828', '#1565C0', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#AD1457', '#9E9D24', '#4527A0', '#00695C']
-    
     for idx, k in enumerate(res['compare_keys']):
         d = res['all_data'][k]
-        datasets.append({
-            'label': d['name'], 'data': d['chart_values'], 
-            'borderColor': colors[idx % len(colors)],
-            'backgroundColor': colors[idx % len(colors)],
-            'tension': 0.3, 'fill': False, 'borderWidth': 3 # 💡 선 두께를 2->3으로 강화
-        })
+        datasets.append({'label': d['name'], 'data': d['chart_values'], 'borderColor': colors[idx % len(colors)], 'backgroundColor': colors[idx % len(colors)], 'tension': 0.3, 'fill': False, 'borderWidth': 3})
 
     html_code = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -528,11 +515,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
     <div style="display:flex; justify-content:space-between; align-items:center; margin: 25px 0 10px 0;"><span class="section-icon" style="font-weight:700; font-size:16px;">🔍 상세 거래 내역</span><select id="sort-select-history" class="sort-select" onchange="renderTablesOnly()"><option value="asc">과거순</option><option value="desc">최신순</option></select></div>
     <div class="table-wrapper"><table><thead><tr><th>날짜</th><th>구분</th><th>종목</th><th>단가/분배금</th><th>수량</th><th>금액</th><th>현금잔고</th><th>총자산</th></tr></thead><tbody id="tbody"></tbody></table></div>
     <script>
-        const data = {json.dumps(res['all_data'])};
-        const keys = {json.dumps(res['compare_keys'])};
-        const labels = {json.dumps(res['labels'])};
-        const colors = {json.dumps(colors)};
-        const datasets = {json.dumps(datasets)};
+        const data = {json.dumps(res['all_data'])}, keys = {json.dumps(res['compare_keys'])}, labels = {json.dumps(res['labels'])}, colors = {json.dumps(colors)}, datasets = {json.dumps(datasets)};
         let chartInstance = null, currentIndex = 0;
 
         function init() {{
@@ -540,27 +523,14 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
             keys.forEach(k => sel.add(new Option(data[k].name, k)));
             document.getElementById('stat-cards').innerHTML = keys.map((key, i) => {{
                 const item = data[key]; const isWithdrawal = item.div_action === '인출(생활비)';
-                let withdrawRow = isWithdrawal ? `<div class="card-row"><span>누적 인출금</span><span style="color:#10b981; font-weight:600;">+${{fmt(item.total_withdrawn)}}</span></div>` : '';
-                return `<div class="card" id="card-${{i}}" onclick="selectItem(${{i}})" style="border-top-color: ${{colors[i % colors.length]}};">
-                    <h3>${{item.name}}</h3>
-                    <div class="card-row"><span>초기 투자금</span><strong>${{fmt(item.initial_cash)}}</strong></div>
-                    <div class="card-row"><span>총 배당금</span><span style="color:#d97706; font-weight:600;">+${{fmt(item.total_dividend)}}</span></div>
-                    <div class="card-row"><span>${{isWithdrawal?'평가 자산':'최종 자산'}}</span><strong>${{fmt(item.final_asset)}}</strong></div>
-                    ${{withdrawRow}}
-                    <div class="card-row"><span>총 수익금</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${{fmt(item.total_profit)}} (${{item.profit_rate.toFixed(2)}}%)</span></div>
-                </div>`;
+                return `<div class="card" id="card-${{i}}" onclick="selectItem(${{i}})" style="border-top-color: ${{colors[i % colors.length]}};"><h3>${{item.name}}</h3><div class="card-row"><span>초기 투자금</span><strong>${{fmt(item.initial_cash)}}</strong></div><div class="card-row"><span>총 배당금</span><span style="color:#d97706; font-weight:600;">+${{fmt(item.total_dividend)}}</span></div><div class="card-row"><span>${{isWithdrawal?'평가 자산':'최종 자산'}}</span><strong>${{fmt(item.final_asset)}}</strong></div><div class="card-row"><span>총 수익금</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${{fmt(item.total_profit)}} (${{item.profit_rate.toFixed(2)}}%)</span></div></div>`;
             }}).join('');
-
             chartInstance = new Chart(document.getElementById('assetChart'), {{
                 type: 'line', data: {{ labels: labels, datasets: datasets }},
                 options: {{
-                    responsive: true, maintainAspectRatio: false,
-                    interaction: {{ mode: 'nearest', axis: 'x', intersect: false }},
-                    plugins: {{ legend: {{ onClick: (e, legendItem) => {{ selectItem(legendItem.datasetIndex); }} }} }},
-                    onClick: (e, elements, chart) => {{
-                        const points = chart.getElementsAtEventForMode(e, 'nearest', {{ intersect: true }}, true);
-                        if (points.length > 0) selectItem(points[0].datasetIndex);
-                    }},
+                    responsive: true, maintainAspectRatio: false, interaction: {{ mode: 'nearest', axis: 'x', intersect: false }},
+                    plugins: {{ legend: {{ onClick: (e, item) => selectItem(item.datasetIndex) }} }},
+                    onClick: (e, elements, chart) => {{ const points = chart.getElementsAtEventForMode(e, 'nearest', {{ intersect: true }}, true); if (points.length > 0) selectItem(points[0].datasetIndex); }},
                     scales: {{ y: {{ ticks: {{ callback: v => (v/10000) + '만' }} }} }}
                 }}
             }});
@@ -568,27 +538,17 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         }}
 
         function selectItem(index) {{
-            currentIndex = index;
-            document.getElementById('ticker-select').value = keys[index];
+            currentIndex = index; document.getElementById('ticker-select').value = keys[index];
             keys.forEach((k, i) => {{
                 const card = document.getElementById(`card-${{i}}`);
-                if (i === index) {{
-                    card.style.opacity = '1'; card.style.transform = 'translateY(-4px)';
-                    card.style.boxShadow = `0 0 0 2px ${{colors[i % colors.length]}}, 0 10px 15px -3px rgba(0,0,0,0.15)`;
-                }} else {{
-                    card.style.opacity = '0.35'; card.style.transform = 'translateY(0)'; card.style.boxShadow = '0 2px 5px rgba(0,0,0,0.05)';
-                }}
+                if (i === index) {{ card.style.opacity = '1'; card.style.transform = 'translateY(-4px)'; card.style.boxShadow = `0 0 0 2px ${{colors[i % colors.length]}}, 0 10px 15px -3px rgba(0,0,0,0.15)`; }}
+                else {{ card.style.opacity = '0.35'; card.style.transform = 'translateY(0)'; card.style.boxShadow = '0 2px 5px rgba(0,0,0,0.05)'; }}
             }});
-            chartInstance.data.datasets.forEach((ds, i) => {{
-                ds.borderWidth = (i === index) ? 5 : 1.5;
-                ds.borderColor = colors[i % colors.length] + (i === index ? '' : '30'); // 💡 선택 안된 선은 18% 투명도
-            }});
-            chartInstance.update();
-            renderTablesOnly();
+            chartInstance.data.datasets.forEach((ds, i) => {{ ds.borderWidth = (i === index) ? 5 : 1.5; ds.borderColor = colors[i % colors.length] + (i === index ? '' : '30'); }});
+            chartInstance.update(); renderTablesOnly();
         }}
 
         function onDropdownChange() {{ selectItem(keys.indexOf(document.getElementById('ticker-select').value)); }}
-
         function renderTablesOnly() {{
             const d = data[keys[currentIndex]];
             let monthlyData = d.monthly_summary.slice(); if (document.getElementById('sort-select-monthly').value === 'desc') monthlyData.reverse(); 
