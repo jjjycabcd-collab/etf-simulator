@@ -129,7 +129,7 @@ if st.session_state.show_settings:
     💡 **참고사항 (데이터 한계 및 기준)**
     * **순수 종가 사용:** 본 시뮬레이터는 배당 수익 이중 계산 방지를 위해 수정주가(Adj Close)가 아닌 **실제 거래된 일별 종가(Close)**를 기준으로 단가를 계산합니다.
     * **배당 기준 시점:** 배당락일(Ex-Dividend Date)에 권리를 획득하며, **실제 현금 입금 및 재투자는 4일 뒤(영업일 기준 보정)**에 이루어집니다.
-    * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수합니다.
+    * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다.
     """)
 
     with st.expander("🔍 종목 코드를 모르시나요? (국내/해외 종목 검색 및 추가)", expanded=False):
@@ -236,7 +236,7 @@ if st.session_state.show_settings:
             'etf': etf_input, 'strat': strategy_options, 'strat_wm': strategy_options_wm
         }
 
-        with st.spinner('배당풍차 및 주가 데이터를 통합 분석 중...'):
+        with st.spinner('데이터 통합 분석 중...'):
             safe_cash = cash_input if cash_input and cash_input.strip() else "5000000"
             clean_cash = re.sub(r'[^0-9.]', '', safe_cash)
             INITIAL_CASH = float(clean_cash) if clean_cash else 5000000.0
@@ -290,7 +290,7 @@ if st.session_state.show_settings:
                     target_raw_data[tk] = (p, d)
 
             if not target_raw_data:
-                st.error("종목 데이터를 불러올 수 없습니다. 코드를 다시 확인해 주세요.")
+                st.error("종목 데이터를 불러올 수 없습니다.")
                 st.stop()
 
             all_trading_dates = sorted(list(set(d for p, _ in target_raw_data.values() for d in p.index)))
@@ -326,39 +326,31 @@ if st.session_state.show_settings:
                     else: invest_dates_set = set(temp_s.groupby([temp_s.index.year, temp_s.index.month]).head(1).index)
 
                 installment = INITIAL_CASH / len(invest_dates_set) if len(invest_dates_set) > 0 else 0
+                reserve_cash, available_cash, staged_cash = (0.0, 0.0, INITIAL_CASH) if is_windmill_split else (INITIAL_CASH, 0.0, 0.0)
                 
-                reserve_cash = 0.0 if is_windmill_split else INITIAL_CASH
-                available_cash = 0.0
-                staged_cash = INITIAL_CASH if is_windmill_split else 0.0 
-                
-                total_shares = 0
-                total_withdrawn, total_dividend = 0.0, 0.0 
+                total_shares, total_withdrawn, total_dividend = 0, 0.0, 0.0 
                 history, summary, asset_by_date, monthly_data = [], [], {}, {}
                 prev_asset = INITIAL_CASH
                 reinvest_flag, windmill_swap_flag = False, False
                 current_idx = 0
                 current_ticker = t_tickers[current_idx]
                 
-                pending_dividends = {}
-                scheduled_buys = {}
+                pending_dividends, scheduled_buys = {}, {}
 
                 def schedule_buys(amount, from_idx, target_tk, n_split):
                     if amount <= 0: return
                     if n_split == 1:
                         scheduled_buys[all_trading_dates[from_idx]] = scheduled_buys.get(all_trading_dates[from_idx], 0.0) + amount
                         return
-                    
                     b_div_series = processed_data[target_tk][1]
                     from_date = all_trading_dates[from_idx]
                     future_div_dates = b_div_series[(b_div_series.index > from_date) & (b_div_series > 0)].index
-                    
                     if len(future_div_dates) > 0:
                         target_date = future_div_dates[0]
                         target_idx = all_trading_dates.index(target_date)
                         end_idx = max(from_idx, target_idx - 1) 
                     else:
                         end_idx = min(len(all_trading_dates)-1, from_idx + 20)
-                        
                     if end_idx <= from_idx:
                         scheduled_buys[all_trading_dates[from_idx]] = scheduled_buys.get(all_trading_dates[from_idx], 0.0) + amount
                     else:
@@ -369,8 +361,7 @@ if st.session_state.show_settings:
                             buy_date = all_trading_dates[idx]
                             scheduled_buys[buy_date] = scheduled_buys.get(buy_date, 0.0) + cash_per
 
-                if is_windmill_split:
-                    schedule_buys(INITIAL_CASH, 0, current_ticker, N_splits)
+                if is_windmill_split: schedule_buys(INITIAL_CASH, 0, current_ticker, N_splits)
 
                 for d_idx, date in enumerate(all_trading_dates):
                     price = processed_data[current_ticker][0][date]
@@ -386,13 +377,10 @@ if st.session_state.show_settings:
                         monthly_data[month_str]['div_per_share'] += float(div)
                         monthly_data[month_str]['div_total'] += div_amount
                         total_dividend += div_amount 
-                        
                         target_payout_date = date + pd.Timedelta(days=4)
                         valid_dates = [d for d in all_trading_dates if d >= target_payout_date]
                         actual_payout_date = valid_dates[0] if valid_dates else all_trading_dates[-1]
-                        
-                        if actual_payout_date not in pending_dividends:
-                            pending_dividends[actual_payout_date] = []
+                        if actual_payout_date not in pending_dividends: pending_dividends[actual_payout_date] = []
                         pending_dividends[actual_payout_date].append({
                             'amount': div_amount, 'ticker': current_ticker, 'div_per_share': float(div), 'shares': int(total_shares)
                         })
@@ -402,7 +390,6 @@ if st.session_state.show_settings:
                         for p_div in pending_dividends[date]:
                             amt = p_div['amount']
                             action_gubun = '배당금(입금)' if div_action_input == "재투자" else '배당금(인출)'
-                            
                             if div_action_input == "재투자":
                                 if is_windmill_split:
                                     staged_cash += amt
@@ -410,9 +397,7 @@ if st.session_state.show_settings:
                                 else:
                                     available_cash += amt
                                     reinvest_flag = True
-                            else:
-                                total_withdrawn += amt
-
+                            else: total_withdrawn += amt
                             history.append({
                                 '날짜': date.strftime('%Y/%m/%d'), '구분': action_gubun, '종목': p_div['ticker'], 
                                 '단가': p_div['div_per_share'], '수량': p_div['shares'], '거래금액': amt, 
@@ -432,15 +417,12 @@ if st.session_state.show_settings:
                         current_idx = (current_idx + 1) % len(t_tickers)
                         current_ticker = t_tickers[current_idx]
                         price = processed_data[current_ticker][0][date] 
-                        
                         if is_windmill_split:
-                            cash_to_reinvest = sell_amount + staged_cash
-                            staged_cash = cash_to_reinvest
-                            schedule_buys(cash_to_reinvest, d_idx, current_ticker, N_splits)
+                            staged_cash += sell_amount
+                            schedule_buys(staged_cash, d_idx, current_ticker, N_splits)
                         else:
                             available_cash += sell_amount
                             reinvest_flag = True
-                            
                         windmill_swap_flag = False
 
                     if is_windmill_split:
@@ -480,7 +462,6 @@ if st.session_state.show_settings:
                         summary.append({'기간': label, '기말단가': float(price), '기말자산': cur_asset, '증감': float(cur_asset - prev_asset), '수익률': float(((cur_asset / INITIAL_CASH) - 1) * 100)})
                         prev_asset = cur_asset
 
-                chart_vals = [asset_by_date.get(lbl, INITIAL_CASH) for lbl in chart_labels]
                 last_date = all_trading_dates[-1]
                 last_price = float(processed_data[current_ticker][0][last_date])
                 final_eval_asset = float(reserve_cash + available_cash + staged_cash + (total_shares * last_price))
@@ -494,7 +475,7 @@ if st.session_state.show_settings:
                     prev_m_asset = m_data['end_asset']
                 
                 real_total_asset = final_eval_asset + total_withdrawn
-                all_sim_data[t_key] = {'name': target['name'], 'summary': summary, 'history': history, 'monthly_summary': monthly_list, 'chart_values': chart_vals, 'final_asset': final_eval_asset, 'div_action': div_action_input, 'initial_cash': INITIAL_CASH, 'total_dividend': total_dividend, 'total_withdrawn': total_withdrawn, 'total_profit': real_total_asset - INITIAL_CASH, 'profit_rate': ((real_total_asset / INITIAL_CASH) - 1) * 100}
+                all_sim_data[t_key] = {'name': target['name'], 'summary': summary, 'history': history, 'monthly_summary': monthly_list, 'chart_values': [asset_by_date.get(lbl, INITIAL_CASH) for lbl in chart_labels], 'final_asset': final_eval_asset, 'div_action': div_action_input, 'initial_cash': INITIAL_CASH, 'total_dividend': total_dividend, 'total_withdrawn': total_withdrawn, 'total_profit': real_total_asset - INITIAL_CASH, 'profit_rate': ((real_total_asset / INITIAL_CASH) - 1) * 100}
 
             st.session_state.sim_result_data = {'initial_cash': INITIAL_CASH, 'compare_keys': [k for k in compare_keys if k in all_sim_data], 'labels': chart_labels, 'all_data': all_sim_data}
             st.session_state.run_clicked, st.session_state.show_settings = True, False
@@ -506,20 +487,16 @@ if st.session_state.show_settings:
 if st.session_state.run_clicked and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
     datasets = []
-    
-    # 💡 [핵심 수정] 색상을 훨씬 부드럽고 눈이 편안한 파스텔톤(Muted tones)으로 전면 교체
-    colors = ['#EF9A9A', '#90CAF9', '#A5D6A7', '#FFCC80', '#B39DDB', '#80DEEA', '#F48FB1', '#E6EE9C', '#CE93D8', '#80CBC4']
+    # 💡 [핵심 수정] 파스텔톤이지만 농도를 높여 차트가 더 진하게 보이도록 조정 (Deep Muted Tones)
+    colors = ['#C62828', '#1565C0', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#AD1457', '#9E9D24', '#4527A0', '#00695C']
     
     for idx, k in enumerate(res['compare_keys']):
         d = res['all_data'][k]
         datasets.append({
-            'label': d['name'], 
-            'data': d['chart_values'], 
+            'label': d['name'], 'data': d['chart_values'], 
             'borderColor': colors[idx % len(colors)],
             'backgroundColor': colors[idx % len(colors)],
-            'tension': 0.3, 
-            'fill': False,
-            'borderWidth': 2
+            'tension': 0.3, 'fill': False, 'borderWidth': 3 # 💡 선 두께를 2->3으로 강화
         })
 
     html_code = f"""
@@ -537,10 +514,8 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         th {{ background: #f8fafc; padding: 12px 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600; border-top: 1px solid #e2e8f0; }}
         td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; }}
         tbody tr:nth-child(even) {{ background-color: #f8fafc; }}
-        tbody tr:hover {{ background-color: #f1f5f9; transition: background-color 0.2s ease; }}
         .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; min-width: 45px; text-align: center;}}
         .buy {{ background: #ef4444; }} .sell {{ background: #3b82f6; }} .div {{ background: #10b981; }} .withdraw {{ background: #f59e0b; }} .reinvest {{ background: #8b5cf6; }} .eval {{ background: #64748b; }} .eval-month {{ background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; }}
-        .header-flex {{ display: flex; justify-content: space-between; align-items: center; margin: 25px 0 10px 0; }}
         .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; }}
         .section-icon {{ border-left: 3px solid #3b82f6; padding-left: 8px; }}
     </style>
@@ -548,9 +523,9 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
     <div class="chart-container"><canvas id="assetChart"></canvas></div>
     <div class="card-grid" id="stat-cards"></div>
     <div style="margin-bottom: 15px; display:flex; justify-content:flex-end;"><select id="ticker-select" class="sort-select" style="min-width: 250px;" onchange="onDropdownChange()"></select></div>
-    <div class="header-flex"><div style="display:flex; align-items:center; gap:10px;"><span class="section-icon" style="font-weight:700; font-size:16px;">🗓️ 월별 요약</span></div><select id="sort-select-monthly" class="sort-select" onchange="renderTablesOnly()"><option value="asc">과거순</option><option value="desc">최신순</option></select></div>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin: 25px 0 10px 0;"><span class="section-icon" style="font-weight:700; font-size:16px;">🗓️ 월별 요약</span><select id="sort-select-monthly" class="sort-select" onchange="renderTablesOnly()"><option value="asc">과거순</option><option value="desc">최신순</option></select></div>
     <div class="table-wrapper"><table><thead><tr><th>기간</th><th>주당배당</th><th>배당률</th><th>배당합계</th><th>기말자산</th><th>증감</th></tr></thead><tbody id="monthly-tbody"></tbody></table></div>
-    <div class="header-flex"><div style="display:flex; align-items:center; gap:10px;"><span class="section-icon" style="font-weight:700; font-size:16px;">🔍 상세 거래 내역</span></div><select id="sort-select-history" class="sort-select" onchange="renderTablesOnly()"><option value="asc">과거순</option><option value="desc">최신순</option></select></div>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin: 25px 0 10px 0;"><span class="section-icon" style="font-weight:700; font-size:16px;">🔍 상세 거래 내역</span><select id="sort-select-history" class="sort-select" onchange="renderTablesOnly()"><option value="asc">과거순</option><option value="desc">최신순</option></select></div>
     <div class="table-wrapper"><table><thead><tr><th>날짜</th><th>구분</th><th>종목</th><th>단가/분배금</th><th>수량</th><th>금액</th><th>현금잔고</th><th>총자산</th></tr></thead><tbody id="tbody"></tbody></table></div>
     <script>
         const data = {json.dumps(res['all_data'])};
@@ -558,37 +533,30 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         const labels = {json.dumps(res['labels'])};
         const colors = {json.dumps(colors)};
         const datasets = {json.dumps(datasets)};
-        let chartInstance = null;
-        let currentIndex = 0;
+        let chartInstance = null, currentIndex = 0;
 
         function init() {{
             const sel = document.getElementById('ticker-select');
             keys.forEach(k => sel.add(new Option(data[k].name, k)));
-
             document.getElementById('stat-cards').innerHTML = keys.map((key, i) => {{
-                const item = data[key]; const isWithdrawal = item.div_action === '인출(생활비)'; const assetLabel = isWithdrawal ? '평가 자산' : '최종 자산';
+                const item = data[key]; const isWithdrawal = item.div_action === '인출(생활비)';
                 let withdrawRow = isWithdrawal ? `<div class="card-row"><span>누적 인출금</span><span style="color:#10b981; font-weight:600;">+${{fmt(item.total_withdrawn)}}</span></div>` : '';
                 return `<div class="card" id="card-${{i}}" onclick="selectItem(${{i}})" style="border-top-color: ${{colors[i % colors.length]}};">
                     <h3>${{item.name}}</h3>
                     <div class="card-row"><span>초기 투자금</span><strong>${{fmt(item.initial_cash)}}</strong></div>
                     <div class="card-row"><span>총 배당금</span><span style="color:#d97706; font-weight:600;">+${{fmt(item.total_dividend)}}</span></div>
-                    <div class="card-row"><span>${{assetLabel}}</span><strong>${{fmt(item.final_asset)}}</strong></div>
+                    <div class="card-row"><span>${{isWithdrawal?'평가 자산':'최종 자산'}}</span><strong>${{fmt(item.final_asset)}}</strong></div>
                     ${{withdrawRow}}
                     <div class="card-row"><span>총 수익금</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${{fmt(item.total_profit)}} (${{item.profit_rate.toFixed(2)}}%)</span></div>
                 </div>`;
             }}).join('');
 
             chartInstance = new Chart(document.getElementById('assetChart'), {{
-                type: 'line',
-                data: {{ labels: labels, datasets: datasets }},
+                type: 'line', data: {{ labels: labels, datasets: datasets }},
                 options: {{
                     responsive: true, maintainAspectRatio: false,
                     interaction: {{ mode: 'nearest', axis: 'x', intersect: false }},
-                    plugins: {{
-                        legend: {{
-                            onClick: (e, legendItem, legend) => {{ selectItem(legendItem.datasetIndex); }}
-                        }}
-                    }},
+                    plugins: {{ legend: {{ onClick: (e, legendItem) => {{ selectItem(legendItem.datasetIndex); }} }} }},
                     onClick: (e, elements, chart) => {{
                         const points = chart.getElementsAtEventForMode(e, 'nearest', {{ intersect: true }}, true);
                         if (points.length > 0) selectItem(points[0].datasetIndex);
@@ -596,61 +564,42 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
                     scales: {{ y: {{ ticks: {{ callback: v => (v/10000) + '만' }} }} }}
                 }}
             }});
-
             selectItem(0); 
         }}
 
         function selectItem(index) {{
             currentIndex = index;
             document.getElementById('ticker-select').value = keys[index];
-
-            // Update Cards visual state
             keys.forEach((k, i) => {{
                 const card = document.getElementById(`card-${{i}}`);
                 if (i === index) {{
-                    card.style.opacity = '1';
-                    card.style.transform = 'translateY(-4px)';
+                    card.style.opacity = '1'; card.style.transform = 'translateY(-4px)';
                     card.style.boxShadow = `0 0 0 2px ${{colors[i % colors.length]}}, 0 10px 15px -3px rgba(0,0,0,0.15)`;
                 }} else {{
-                    card.style.opacity = '0.4';
-                    card.style.transform = 'translateY(0)';
-                    card.style.boxShadow = '0 2px 5px rgba(0,0,0,0.05)';
+                    card.style.opacity = '0.35'; card.style.transform = 'translateY(0)'; card.style.boxShadow = '0 2px 5px rgba(0,0,0,0.05)';
                 }}
             }});
-
-            // Update Chart visual state
             chartInstance.data.datasets.forEach((ds, i) => {{
-                if (i === index) {{
-                    ds.borderWidth = 4;
-                    ds.borderColor = colors[i % colors.length];
-                }} else {{
-                    ds.borderWidth = 1.5;
-                    ds.borderColor = colors[i % colors.length] + '40'; // 25% opacity
-                }}
+                ds.borderWidth = (i === index) ? 5 : 1.5;
+                ds.borderColor = colors[i % colors.length] + (i === index ? '' : '30'); // 💡 선택 안된 선은 18% 투명도
             }});
             chartInstance.update();
-
             renderTablesOnly();
         }}
 
-        function onDropdownChange() {{
-            const val = document.getElementById('ticker-select').value;
-            selectItem(keys.indexOf(val));
-        }}
+        function onDropdownChange() {{ selectItem(keys.indexOf(document.getElementById('ticker-select').value)); }}
 
         function renderTablesOnly() {{
             const d = data[keys[currentIndex]];
             let monthlyData = d.monthly_summary.slice(); if (document.getElementById('sort-select-monthly').value === 'desc') monthlyData.reverse(); 
-            document.getElementById('monthly-tbody').innerHTML = monthlyData.map(m => `<tr><td>${{m.기간}}</td><td>${{Math.floor(m.주당배당).toLocaleString()}}</td><td style="color:#d97706; font-weight:600;">${{m.배당률.toFixed(2)}}%</td><td>${{m.배당합계 > 0 ? fmtMan(m.배당합계) : '-'}}</td><td style="font-weight:600;">${{fmtMan(m.기말자산)}}</td><td style="color:${{colorForChange(m.증감)}}; font-weight:600;">${{m.증감 > 0 ? '+' : ''}}${{fmtMan(m.증감)}}</td></tr>`).join('');
+            document.getElementById('monthly-tbody').innerHTML = monthlyData.map(m => `<tr><td>${{m.기간}}</td><td>${{Math.floor(m.주당배당).toLocaleString()}}</td><td style="color:#d97706; font-weight:600;">${{m.배당률.toFixed(2)}}%</td><td>${{m.배당합계 > 0 ? fmtMan(m.배당합계) : '-'}}</td><td style="font-weight:600;">${{fmtMan(m.기말자산)}}</td><td style="color:${{m.증감 > 0 ? '#dc2626' : (m.증감 < 0 ? '#2563eb' : '#334155')}}; font-weight:600;">${{m.증감 > 0 ? '+' : ''}}${{fmtMan(m.증감)}}</td></tr>`).join('');
             let historyData = d.history.slice(); if (document.getElementById('sort-select-history').value === 'desc') historyData.reverse(); 
             document.getElementById('tbody').innerHTML = historyData.map(h => `<tr><td>${{h.날짜}}</td><td><span class="badge ${{getBadgeClass(h.구분)}}">${{h.구분}}</span></td><td style="color:#64748b; font-weight:600;">${{h.종목}}</td><td>${{fmt(h.단가)}}</td><td>${{h.수량.toLocaleString()}}</td><td>${{h.거래금액 > 0 ? fmt(h.거래금액) : '-'}}</td><td>${{fmt(h.현금잔고)}}</td><td><strong>${{fmt(h.총자산)}}</strong></td></tr>`).join('');
         }}
 
         function fmt(v) {{ return Math.floor(v).toLocaleString() + "원"; }}
         function fmtMan(v) {{ if (v === 0) return "0"; const isNeg = v < 0; let absV = Math.abs(v); if (absV < 10000) return (isNeg ? "-" : "") + Math.floor(absV).toLocaleString() + "원"; return (isNeg ? "-" : "") + Math.floor(absV / 10000).toLocaleString() + "만"; }}
-        function colorForChange(v) {{ return v > 0 ? '#dc2626' : (v < 0 ? '#2563eb' : '#334155'); }}
         function getBadgeClass(type) {{ if(type.includes('풍차매도')) return 'sell'; if(type.includes('매수')) return 'reinvest'; if(type.includes('월말평가')) return 'eval-month'; if(type.includes('배당금(인출)')) return 'withdraw'; if(type.includes('배당금(입금)')) return 'div'; if(type.includes('최종평가')) return 'eval'; return 'buy'; }}
-        
         init();
     </script></body></html>
     """
