@@ -29,22 +29,21 @@ if 'last_inputs' not in st.session_state:
         'cash': "5,000,000",
         'period': "2025.1~2026.4",
         'div': "재투자",
-        'etf': "498400, 472150",
-        'strat': ["거치식 (일괄 매수)"]
+        'etf': "498400 + 472150",
+        'strat': ["거치식 (일괄 매수)"],
+        'strat_wm': ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"]
     }
 
 if 'saved_cash' not in st.session_state: st.session_state.saved_cash = st.session_state.last_inputs['cash']
 if 'saved_period' not in st.session_state: st.session_state.saved_period = st.session_state.last_inputs['period']
 if 'saved_div_action' not in st.session_state: st.session_state.saved_div_action = st.session_state.last_inputs['div']
 if 'saved_etf' not in st.session_state: st.session_state.saved_etf = st.session_state.last_inputs['etf']
-if 'saved_strategy' not in st.session_state: st.session_state.saved_strategy = st.session_state.last_inputs['strat']
 
 # ==========================================
 # 종목 데이터 마스터 적재 (캐싱)
 # ==========================================
 @st.cache_data(ttl=86400)
 def load_all_tickers():
-    """국내 상장 주식 및 ETF 전체 목록 수집"""
     tickers = {}
     try:
         url = "http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
@@ -56,9 +55,8 @@ def load_all_tickers():
             for _, row in df.iterrows():
                 code = str(row['종목코드']).zfill(6)
                 tickers[code] = row['회사명']
-    except Exception:
-        fallback = {"005930": "삼성전자", "000660": "SK하이닉스"}
-        tickers.update(fallback)
+    except:
+        tickers.update({"005930": "삼성전자", "000660": "SK하이닉스"})
 
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -66,14 +64,14 @@ def load_all_tickers():
         if res.status_code == 200:
             for item in res.json().get('result', {}).get('etfItemList', []):
                 tickers[item['itemcode']] = item['itemname']
-    except Exception:
+    except:
         pass
     return tickers
 
 ALL_TICKERS = load_all_tickers()
 
 # ==========================================
-# 함수 정의부 및 콜백(Callback)
+# 함수 정의부 및 콜백
 # ==========================================
 @st.cache_data(ttl=86400)
 def get_stock_info(code):
@@ -132,7 +130,7 @@ if st.session_state.show_settings:
     💡 **참고사항 (데이터 한계 및 기준)**
     * **순수 종가 사용:** 본 시뮬레이터는 배당 수익 이중 계산 방지를 위해 수정주가(Adj Close)가 아닌 **실제 거래된 일별 종가(Close)**를 기준으로 단가를 계산합니다.
     * **배당 기준 시점:** 배당락일(Ex-Dividend Date)에 권리를 획득하며, **실제 현금 입금 및 재투자는 4일 뒤(영업일 기준 보정)**에 이루어집니다.
-    * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수하여 배당 주기를 극대화합니다.
+    * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일이 도래하면, 당일 종가에 A종목을 전량 매도하고 B종목으로 교차 매수합니다.
     """)
 
     with st.expander("🔍 종목 코드를 모르시나요? (국내/해외 종목 검색 및 추가)", expanded=False):
@@ -143,11 +141,9 @@ if st.session_state.show_settings:
             with st.spinner("검색 중..."):
                 search_kw_clean = search_kw.replace(" ", "").lower()
                 matches = []
-                
                 for code, name in ALL_TICKERS.items():
                     if search_kw_clean in name.replace(" ", "").lower() or search_kw_clean == code.lower():
                         matches.append((code, name))
-                        
                 try:
                     yf_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={search_kw}&quotesCount=5&newsCount=0"
                     yf_headers = {'User-Agent': 'Mozilla/5.0'}
@@ -174,10 +170,8 @@ if st.session_state.show_settings:
                     st.markdown("##### 💡 검색 결과 (오른쪽 버튼을 누르면 자동으로 폼에 추가됩니다)")
                     for code, name in final_results:
                         col_a, col_b = st.columns([5, 1])
-                        with col_a:
-                            st.write(f"**{name}** (`{code}`)")
-                        with col_b:
-                            st.button("➕ 추가", key=f"add_btn_{code}", on_click=append_to_etf_input, args=(code,))
+                        with col_a: st.write(f"**{name}** (`{code}`)")
+                        with col_b: st.button("➕ 추가", key=f"add_btn_{code}", on_click=append_to_etf_input, args=(code,))
                 else:
                     st.warning("검색 결과가 없습니다.")
 
@@ -193,13 +187,31 @@ if st.session_state.show_settings:
         with col2:
             etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", key="saved_etf", placeholder="498400, 472150, 498400 + 472150", on_change=trigger_simulation)
             
-            is_windmill_mode = '+' in etf_input
-            strategy_options = st.multiselect(
-                "분할 매수 방식 (배당풍차 포함 시 선택 불가)",
-                ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
-                key="saved_strategy",
-                disabled=is_windmill_mode
-            )
+            raw_target_strs = [t.strip().upper() for t in etf_input.split(',') if t.strip()]
+            is_single_windmill_ui = len(raw_target_strs) == 1 and '+' in raw_target_strs[0]
+            
+            # 💡 [핵심 추가] 단독 풍차 여부에 따라 선택창(UI) 다르게 렌더링
+            strat_wm_default = st.session_state.last_inputs.get('strat_wm', ["일괄 매수"])
+            strat_default = st.session_state.last_inputs.get('strat', ["거치식 (일괄 매수)"])
+
+            if is_single_windmill_ui:
+                valid_wm = [s for s in strat_wm_default if s in ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"]]
+                strategy_options_wm = st.multiselect(
+                    "배당풍차 매수 방식 (복수 선택하여 차트 비교 가능)",
+                    ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"],
+                    default=valid_wm if valid_wm else ["일괄 매수"]
+                )
+                strategy_options = []
+            else:
+                valid_s = [s for s in strat_default if s in ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"]]
+                is_windmill_mixed = any('+' in t for t in raw_target_strs)
+                strategy_options = st.multiselect(
+                    "분할 매수 방식 (단일 종목 전용, 풍차 섞일 시 비활성)",
+                    ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
+                    default=valid_s if valid_s else ["거치식 (일괄 매수)"],
+                    disabled=is_windmill_mixed
+                )
+                strategy_options_wm = []
             
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
         
@@ -214,41 +226,33 @@ if st.session_state.show_settings:
                         const active = doc.activeElement;
                         if (active && active.tagName === 'INPUT') {
                             const ariaLabel = active.getAttribute('aria-label') || "";
-                            if (ariaLabel.includes('검색어')) {
-                                return; 
-                            }
+                            if (ariaLabel.includes('검색어')) return; 
                         }
                         const buttons = Array.from(doc.querySelectorAll('button'));
                         const runBtn = buttons.find(b => b.innerText && b.innerText.includes('시뮬레이션 실행'));
-                        if (runBtn) {
-                            setTimeout(() => { runBtn.click(); }, 50);
-                        }
+                        if (runBtn) setTimeout(() => { runBtn.click(); }, 50);
                     }
                 });
             }
             </script>
-            """,
-            height=0, width=0
+            """, height=0, width=0
         )
 
     if run_btn or st.session_state.do_run:
         st.session_state.do_run = False  
         
         st.session_state.last_inputs = {
-            'cash': cash_input,
-            'period': period_input,
-            'div': div_action_input,
-            'etf': etf_input,
-            'strat': strategy_options
+            'cash': cash_input, 'period': period_input, 'div': div_action_input,
+            'etf': etf_input, 'strat': strategy_options, 'strat_wm': strategy_options_wm
         }
 
-        with st.spinner('배당풍차 및 주가 데이터를 통합 분석 중...'):
+        with st.spinner('배당풍차(분할매수) 및 주가 데이터를 통합 분석 중...'):
             safe_cash = cash_input if cash_input and cash_input.strip() else "5000000"
             clean_cash = re.sub(r'[^0-9.]', '', safe_cash)
             INITIAL_CASH = float(clean_cash) if clean_cash else 5000000.0
             
             safe_period = period_input if period_input and period_input.strip() else "2025.1~2026.4"
-            safe_etf = etf_input if etf_input and etf_input.strip() else "498400, 472150, 498400 + 472150"
+            safe_etf = etf_input if etf_input and etf_input.strip() else "498400 + 472150"
             
             try:
                 if '~' in safe_period:
@@ -269,9 +273,16 @@ if st.session_state.show_settings:
             targets = []
             compare_keys = [] 
             
-            has_windmill = any('+' in t for t in raw_target_strs)
+            is_single_windmill = len(raw_target_strs) == 1 and '+' in raw_target_strs[0]
             
-            if not has_windmill:
+            # 💡 [핵심 수정] 타겟 생성 로직 분기: 단일 풍차면 선택된 N분할 방식을 개별 타겟으로 생성
+            if is_single_windmill:
+                t = raw_target_strs[0]
+                for strat in strategy_options_wm:
+                    key = f"{t}_{strat}"
+                    targets.append({'key': key, 'ticker': t, 'strategy': strat, 'name': f"풍차({t}) - {strat}"})
+                    compare_keys.append(key)
+            elif not any('+' in t for t in raw_target_strs):
                 strats = strategy_options if strategy_options else ["거치식 (일괄 매수)"]
                 for t in raw_target_strs:
                     for strat in strats:
@@ -313,17 +324,32 @@ if st.session_state.show_settings:
                 t_key = target['key']
                 t_tickers = [tk.strip() for tk in target['ticker'].split('+') if tk.strip()]
                 is_windmill = len(t_tickers) > 1
+                strat = target['strategy']
+                
+                # 풍차 분할 모드인지 식별
+                is_windmill_split = is_windmill and strat in ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"]
                 
                 if any(tk not in processed_data for tk in t_tickers): continue
                 
-                strat = target['strategy']
-                if strat == "거치식 (일괄 매수)": invest_dates_set = {all_trading_dates[0]}
-                elif strat == "적립식 (매일)": invest_dates_set = set(all_trading_dates)
-                elif strat == "적립식 (매주)": invest_dates_set = set(temp_s.groupby([temp_s.index.isocalendar().year, temp_s.index.isocalendar().week]).head(1).index)
-                else: invest_dates_set = set(temp_s.groupby([temp_s.index.year, temp_s.index.month]).head(1).index)
+                if is_windmill_split:
+                    if "4분할" in strat: N_splits = 4
+                    elif "6분할" in strat: N_splits = 6
+                    else: N_splits = 1
+                    invest_dates_set = set() # 정기투자는 무시
+                else:
+                    N_splits = 1
+                    if strat == "거치식 (일괄 매수)": invest_dates_set = {all_trading_dates[0]}
+                    elif strat == "적립식 (매일)": invest_dates_set = set(all_trading_dates)
+                    elif strat == "적립식 (매주)": invest_dates_set = set(temp_s.groupby([temp_s.index.isocalendar().year, temp_s.index.isocalendar().week]).head(1).index)
+                    else: invest_dates_set = set(temp_s.groupby([temp_s.index.year, temp_s.index.month]).head(1).index)
 
                 installment = INITIAL_CASH / len(invest_dates_set) if len(invest_dates_set) > 0 else 0
-                reserve_cash, available_cash, total_shares = INITIAL_CASH, 0.0, 0
+                
+                reserve_cash = 0.0 if is_windmill_split else INITIAL_CASH
+                available_cash = 0.0
+                staged_cash = INITIAL_CASH if is_windmill_split else 0.0 # 💡 분할매수용 대기 자금
+                
+                total_shares = 0
                 total_withdrawn, total_dividend = 0.0, 0.0 
                 history, summary, asset_by_date, monthly_data = [], [], {}, {}
                 prev_asset = INITIAL_CASH
@@ -331,10 +357,41 @@ if st.session_state.show_settings:
                 current_idx = 0
                 current_ticker = t_tickers[current_idx]
                 
-                # 💡 [핵심 추가] 입금 대기 중인 배당금을 관리하는 Queue
                 pending_dividends = {}
+                scheduled_buys = {}
 
-                for date in all_trading_dates:
+                # 💡 [핵심 함수] 잔여 대기 자금(staged_cash)을 D-1에 맞춰 균등 분할 스케줄링
+                def schedule_buys(amount, from_idx, target_tk, n_split):
+                    if amount <= 0: return
+                    if n_split == 1:
+                        scheduled_buys[all_trading_dates[from_idx]] = scheduled_buys.get(all_trading_dates[from_idx], 0.0) + amount
+                        return
+                    
+                    b_div_series = processed_data[target_tk][1]
+                    from_date = all_trading_dates[from_idx]
+                    future_div_dates = b_div_series[(b_div_series.index > from_date) & (b_div_series > 0)].index
+                    
+                    if len(future_div_dates) > 0:
+                        target_date = future_div_dates[0]
+                        target_idx = all_trading_dates.index(target_date)
+                        end_idx = max(from_idx, target_idx - 1) # 배당락일 D-1까지만 매수
+                    else:
+                        end_idx = min(len(all_trading_dates)-1, from_idx + 20)
+                        
+                    if end_idx == from_idx:
+                        scheduled_buys[all_trading_dates[from_idx]] = scheduled_buys.get(all_trading_dates[from_idx], 0.0) + amount
+                    else:
+                        step = (end_idx - from_idx) / (n_split - 1)
+                        cash_per = amount / n_split
+                        for i in range(n_split):
+                            idx = from_idx + int(round(i * step))
+                            scheduled_buys[all_trading_dates[idx]] = scheduled_buys.get(all_trading_dates[idx], 0.0) + cash_per
+
+                # 초기 1회차 자본 스케줄링
+                if is_windmill_split:
+                    schedule_buys(INITIAL_CASH, 0, current_ticker, N_splits)
+
+                for d_idx, date in enumerate(all_trading_dates):
                     price = processed_data[current_ticker][0][date]
                     if pd.isna(price): continue 
 
@@ -342,7 +399,7 @@ if st.session_state.show_settings:
                     if month_str not in monthly_data:
                         monthly_data[month_str] = {'div_per_share': 0.0, 'div_total': 0.0, 'end_asset': 0.0, 'end_price': 0.0}
 
-                    # 1. 배당락일 (Ex-Dividend Date): 권리 획득 및 4일 뒤 지급 스케줄링
+                    # 배당금 발생 및 +4일 입금 스케줄링
                     div = processed_data[current_ticker][1][date]
                     if div > 0 and total_shares > 0:
                         div_amount = total_shares * float(div)
@@ -350,78 +407,93 @@ if st.session_state.show_settings:
                         monthly_data[month_str]['div_total'] += div_amount
                         total_dividend += div_amount 
                         
-                        # 4일 뒤 계산 (주말 감안하여 거래일 중 가장 가까운 다음 날 찾기)
                         target_payout_date = date + pd.Timedelta(days=4)
                         valid_dates = [d for d in all_trading_dates if d >= target_payout_date]
                         actual_payout_date = valid_dates[0] if valid_dates else all_trading_dates[-1]
                         
                         if actual_payout_date not in pending_dividends:
                             pending_dividends[actual_payout_date] = []
-                        
                         pending_dividends[actual_payout_date].append({
-                            'amount': div_amount,
-                            'ticker': current_ticker,
-                            'div_per_share': float(div),
-                            'shares': int(total_shares)
+                            'amount': div_amount, 'ticker': current_ticker, 'div_per_share': float(div), 'shares': int(total_shares)
                         })
-
                         if is_windmill: windmill_swap_flag = True
 
-                    # 2. +4일 스케줄링 된 배당금 실제 입금 처리
+                    # 배당금 실제 입금 처리
                     if date in pending_dividends:
                         for p_div in pending_dividends[date]:
                             amt = p_div['amount']
                             action_gubun = '배당금(입금)' if div_action_input == "재투자" else '배당금(인출)'
                             
                             if div_action_input == "재투자":
-                                available_cash += amt
-                                reinvest_flag = True
+                                if is_windmill_split:
+                                    staged_cash += amt
+                                    scheduled_buys[date] = scheduled_buys.get(date, 0.0) + amt
+                                else:
+                                    available_cash += amt
+                                    reinvest_flag = True
                             else:
                                 total_withdrawn += amt
 
                             history.append({
-                                '날짜': date.strftime('%Y/%m/%d'), 
-                                '구분': action_gubun, 
-                                '종목': p_div['ticker'], 
-                                '단가': p_div['div_per_share'], 
-                                '수량': p_div['shares'], 
-                                '거래금액': amt, 
-                                '현금잔고': float(reserve_cash + available_cash), 
-                                '총자산': float(reserve_cash + available_cash + (total_shares * price))
+                                '날짜': date.strftime('%Y/%m/%d'), '구분': action_gubun, '종목': p_div['ticker'], 
+                                '단가': p_div['div_per_share'], '수량': p_div['shares'], '거래금액': amt, 
+                                '현금잔고': float(reserve_cash + available_cash + staged_cash), 
+                                '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))
                             })
 
                     is_invest_day = date in invest_dates_set
-                    if is_invest_day:
+                    if not is_windmill_split and is_invest_day:
                         reserve_cash -= installment
                         available_cash += installment
 
-                    # 3. 배당락일에 보유분 전량 매도 및 풍차 스위칭 (배당금은 4일 뒤 예약된 상태)
+                    # 풍차 교차 매매 (전량 매도 후 다음 타겟 스케줄링)
                     if windmill_swap_flag:
                         sell_amount = total_shares * price
-                        available_cash += sell_amount
-                        history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '풍차매도', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': sell_amount, '현금잔고': float(reserve_cash + available_cash), '총자산': float(reserve_cash + available_cash)})
+                        history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '풍차매도', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': sell_amount, '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
                         total_shares = 0
                         current_idx = (current_idx + 1) % len(t_tickers)
                         current_ticker = t_tickers[current_idx]
                         price = processed_data[current_ticker][0][date] 
-                        windmill_swap_flag, reinvest_flag = False, True 
+                        
+                        if is_windmill_split:
+                            cash_to_reinvest = sell_amount + staged_cash
+                            staged_cash = cash_to_reinvest
+                            schedule_buys(cash_to_reinvest, d_idx, current_ticker, N_splits)
+                        else:
+                            available_cash += sell_amount
+                            reinvest_flag = True
+                            
+                        windmill_swap_flag = False
 
-                    # 4. 현금 잔고를 활용하여 새로운 종목 매수
-                    if is_invest_day or reinvest_flag:
-                        if not pd.isna(price) and available_cash >= price:
-                            shares_to_buy = int(available_cash // price)
-                            if shares_to_buy > 0:
-                                available_cash -= shares_to_buy * price
-                                total_shares += shares_to_buy
-                                gubun_text = '매수'
-                                if reinvest_flag and not is_invest_day: gubun_text = '풍차매수' if is_windmill else '배당재투자'
-                                elif reinvest_flag and is_invest_day: gubun_text = '매수+풍차' if is_windmill else '매수+재투자'
-                                history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(shares_to_buy * price), '현금잔고': float(reserve_cash + available_cash), '총자산': float(reserve_cash + available_cash + (total_shares * price))})
-                        reinvest_flag = False
+                    # 예약된 분할 매수 또는 일반 매수 실행
+                    if is_windmill_split:
+                        if date in scheduled_buys:
+                            buy_cash = min(scheduled_buys[date], staged_cash)
+                            if buy_cash > 0 and not pd.isna(price):
+                                shares_to_buy = int(buy_cash // price)
+                                if shares_to_buy > 0:
+                                    cost = shares_to_buy * price
+                                    staged_cash -= cost
+                                    total_shares += shares_to_buy
+                                    gubun_text = f'매수({N_splits}분할)' if N_splits > 1 else '일괄매수'
+                                    history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))})
+                    else:
+                        if is_invest_day or reinvest_flag:
+                            if not pd.isna(price) and available_cash >= price:
+                                shares_to_buy = int(available_cash // price)
+                                if shares_to_buy > 0:
+                                    cost = shares_to_buy * price
+                                    available_cash -= cost
+                                    total_shares += shares_to_buy
+                                    gubun_text = '매수'
+                                    if reinvest_flag and not is_invest_day: gubun_text = '풍차매수' if is_windmill else '배당재투자'
+                                    elif reinvest_flag and is_invest_day: gubun_text = '매수+풍차' if is_windmill else '매수+재투자'
+                                    history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash), '총자산': float(reserve_cash + available_cash + (total_shares * price))})
+                            reinvest_flag = False
                     
-                    cur_asset = float(reserve_cash + available_cash + (total_shares * price))
+                    cur_asset = float(reserve_cash + available_cash + staged_cash + (total_shares * price))
                     if date in eom_dates_set and date != all_trading_dates[-1]:
-                        history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '월말평가', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': 0.0, '현금잔고': float(reserve_cash + available_cash), '총자산': cur_asset})
+                        history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '월말평가', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': 0.0, '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': cur_asset})
                     
                     monthly_data[month_str]['end_asset'] = cur_asset
                     monthly_data[month_str]['end_price'] = float(price)
@@ -434,8 +506,8 @@ if st.session_state.show_settings:
                 chart_vals = [asset_by_date.get(lbl, INITIAL_CASH) for lbl in chart_labels]
                 last_date = all_trading_dates[-1]
                 last_price = float(processed_data[current_ticker][0][last_date])
-                final_eval_asset = float(reserve_cash + available_cash + (total_shares * last_price))
-                history.append({'날짜': last_date.strftime('%Y/%m/%d'), '구분': '최종평가', '종목': current_ticker, '단가': last_price, '수량': int(total_shares), '거래금액': 0.0, '현금잔고': float(reserve_cash + available_cash), '총자산': final_eval_asset})
+                final_eval_asset = float(reserve_cash + available_cash + staged_cash + (total_shares * last_price))
+                history.append({'날짜': last_date.strftime('%Y/%m/%d'), '구분': '최종평가', '종목': current_ticker, '단가': last_price, '수량': int(total_shares), '거래금액': 0.0, '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': final_eval_asset})
 
                 monthly_list, prev_m_asset = [], INITIAL_CASH
                 for m_str in sorted(monthly_data.keys()):
@@ -500,7 +572,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         function fmt(v) {{ return Math.floor(v).toLocaleString() + "원"; }}
         function fmtMan(v) {{ if (v === 0) return "0"; const isNeg = v < 0; let absV = Math.abs(v); if (absV < 10000) return (isNeg ? "-" : "") + Math.floor(absV).toLocaleString() + "원"; return (isNeg ? "-" : "") + Math.floor(absV / 10000).toLocaleString() + "만"; }}
         function colorForChange(v) {{ return v > 0 ? '#dc2626' : (v < 0 ? '#2563eb' : '#334155'); }}
-        function getBadgeClass(type) {{ if(type.includes('풍차매도')) return 'sell'; if(type.includes('풍차매수') || type.includes('재투자')) return 'reinvest'; if(type.includes('월말평가')) return 'eval-month'; if(type.includes('배당금(인출)')) return 'withdraw'; if(type.includes('배당금(입금)')) return 'div'; if(type.includes('최종평가')) return 'eval'; return 'buy'; }}
+        function getBadgeClass(type) {{ if(type.includes('풍차매도')) return 'sell'; if(type.includes('매수')) return 'reinvest'; if(type.includes('월말평가')) return 'eval-month'; if(type.includes('배당금(인출)')) return 'withdraw'; if(type.includes('배당금(입금)')) return 'div'; if(type.includes('최종평가')) return 'eval'; return 'buy'; }}
         function renderTable() {{
             const k = sel.value; const d = data[k];
             document.getElementById('stat-cards').innerHTML = keys.map(key => {{
