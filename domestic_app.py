@@ -20,6 +20,8 @@ if 'run_clicked' not in st.session_state:
     st.session_state.run_clicked = False
 if 'sim_result_data' not in st.session_state:
     st.session_state.sim_result_data = None
+if 'do_run' not in st.session_state:
+    st.session_state.do_run = False
 
 # --- 입력값 유지를 위한 세션 상태 초기화 ---
 if 'last_inputs' not in st.session_state:
@@ -112,6 +114,9 @@ def append_to_etf_input(code):
     else:
         st.session_state.saved_etf = current_str + f", {code}" if current_str.strip() else code
 
+def trigger_simulation():
+    st.session_state.do_run = True
+
 # ==========================================
 # UI 영역
 # ==========================================
@@ -126,7 +131,7 @@ if st.session_state.show_settings:
     st.info("""
     💡 **참고사항 (데이터 한계 및 기준)**
     * **순수 종가 사용:** 본 시뮬레이터는 배당 수익 이중 계산 방지를 위해 수정주가(Adj Close)가 아닌 **실제 거래된 일별 종가(Close)**를 기준으로 단가를 계산합니다.
-    * **배당 기준 시점:** yfinance에서 제공하는 배당 기준일은 실제 입금일이 아닌 **'배당락일(Ex-Dividend Date)'**입니다. 재투자 모드 시 배당락일 당일 종가에 전액 재투자되는 것으로 백테스트가 진행됩니다.
+    * **배당 기준 시점:** 배당락일(Ex-Dividend Date)에 권리를 획득하며, **실제 현금 입금 및 재투자는 4일 뒤(영업일 기준 보정)**에 이루어집니다.
     * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수하여 배당 주기를 극대화합니다.
     """)
 
@@ -181,12 +186,12 @@ if st.session_state.show_settings:
         
         col1, col2 = st.columns(2)
         with col1:
-            cash_input = st.text_input("초기 총 투자금 (원)", key="saved_cash", placeholder="5,000,000")
-            period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", key="saved_period", placeholder="2025.1~2026.4")
+            cash_input = st.text_input("초기 총 투자금 (원)", key="saved_cash", placeholder="5,000,000", on_change=trigger_simulation)
+            period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", key="saved_period", placeholder="2025.1~2026.4", on_change=trigger_simulation)
             div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True, key="saved_div_action")
 
         with col2:
-            etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", key="saved_etf", placeholder="498400, 472150, 498400 + 472150")
+            etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", key="saved_etf", placeholder="498400, 472150, 498400 + 472150", on_change=trigger_simulation)
             
             is_windmill_mode = '+' in etf_input
             strategy_options = st.multiselect(
@@ -198,7 +203,6 @@ if st.session_state.show_settings:
             
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
         
-        # 💡 [핵심 수정] 엔터키로 실행되도록 감지하는 백그라운드 스크립트 추가
         components.html(
             """
             <script>
@@ -210,7 +214,6 @@ if st.session_state.show_settings:
                         const active = doc.activeElement;
                         if (active && active.tagName === 'INPUT') {
                             const ariaLabel = active.getAttribute('aria-label') || "";
-                            // 종목 검색창에서 엔터를 친 경우는 시뮬레이션을 실행하지 않고 무시함
                             if (ariaLabel.includes('검색어')) {
                                 return; 
                             }
@@ -228,7 +231,9 @@ if st.session_state.show_settings:
             height=0, width=0
         )
 
-    if run_btn:
+    if run_btn or st.session_state.do_run:
+        st.session_state.do_run = False  
+        
         st.session_state.last_inputs = {
             'cash': cash_input,
             'period': period_input,
@@ -325,6 +330,9 @@ if st.session_state.show_settings:
                 reinvest_flag, windmill_swap_flag = False, False
                 current_idx = 0
                 current_ticker = t_tickers[current_idx]
+                
+                # 💡 [핵심 추가] 입금 대기 중인 배당금을 관리하는 Queue
+                pending_dividends = {}
 
                 for date in all_trading_dates:
                     price = processed_data[current_ticker][0][date]
@@ -334,6 +342,7 @@ if st.session_state.show_settings:
                     if month_str not in monthly_data:
                         monthly_data[month_str] = {'div_per_share': 0.0, 'div_total': 0.0, 'end_asset': 0.0, 'end_price': 0.0}
 
+                    # 1. 배당락일 (Ex-Dividend Date): 권리 획득 및 4일 뒤 지급 스케줄링
                     div = processed_data[current_ticker][1][date]
                     if div > 0 and total_shares > 0:
                         div_amount = total_shares * float(div)
@@ -341,19 +350,52 @@ if st.session_state.show_settings:
                         monthly_data[month_str]['div_total'] += div_amount
                         total_dividend += div_amount 
                         
-                        action_gubun = '배당금' if div_action_input == "재투자" else '배당금(인출)'
-                        if div_action_input == "재투자": available_cash += div_amount
-                        else: total_withdrawn += div_amount
+                        # 4일 뒤 계산 (주말 감안하여 거래일 중 가장 가까운 다음 날 찾기)
+                        target_payout_date = date + pd.Timedelta(days=4)
+                        valid_dates = [d for d in all_trading_dates if d >= target_payout_date]
+                        actual_payout_date = valid_dates[0] if valid_dates else all_trading_dates[-1]
+                        
+                        if actual_payout_date not in pending_dividends:
+                            pending_dividends[actual_payout_date] = []
+                        
+                        pending_dividends[actual_payout_date].append({
+                            'amount': div_amount,
+                            'ticker': current_ticker,
+                            'div_per_share': float(div),
+                            'shares': int(total_shares)
+                        })
 
-                        history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': action_gubun, '종목': current_ticker, '단가': float(div), '수량': int(total_shares), '거래금액': div_amount, '현금잔고': float(reserve_cash + available_cash), '총자산': float(reserve_cash + available_cash + (total_shares * price))})
                         if is_windmill: windmill_swap_flag = True
-                        elif div_action_input == "재투자": reinvest_flag = True
+
+                    # 2. +4일 스케줄링 된 배당금 실제 입금 처리
+                    if date in pending_dividends:
+                        for p_div in pending_dividends[date]:
+                            amt = p_div['amount']
+                            action_gubun = '배당금(입금)' if div_action_input == "재투자" else '배당금(인출)'
+                            
+                            if div_action_input == "재투자":
+                                available_cash += amt
+                                reinvest_flag = True
+                            else:
+                                total_withdrawn += amt
+
+                            history.append({
+                                '날짜': date.strftime('%Y/%m/%d'), 
+                                '구분': action_gubun, 
+                                '종목': p_div['ticker'], 
+                                '단가': p_div['div_per_share'], 
+                                '수량': p_div['shares'], 
+                                '거래금액': amt, 
+                                '현금잔고': float(reserve_cash + available_cash), 
+                                '총자산': float(reserve_cash + available_cash + (total_shares * price))
+                            })
 
                     is_invest_day = date in invest_dates_set
                     if is_invest_day:
                         reserve_cash -= installment
                         available_cash += installment
 
+                    # 3. 배당락일에 보유분 전량 매도 및 풍차 스위칭 (배당금은 4일 뒤 예약된 상태)
                     if windmill_swap_flag:
                         sell_amount = total_shares * price
                         available_cash += sell_amount
@@ -364,8 +406,9 @@ if st.session_state.show_settings:
                         price = processed_data[current_ticker][0][date] 
                         windmill_swap_flag, reinvest_flag = False, True 
 
+                    # 4. 현금 잔고를 활용하여 새로운 종목 매수
                     if is_invest_day or reinvest_flag:
-                        if not pd.isna(price):
+                        if not pd.isna(price) and available_cash >= price:
                             shares_to_buy = int(available_cash // price)
                             if shares_to_buy > 0:
                                 available_cash -= shares_to_buy * price
@@ -457,7 +500,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         function fmt(v) {{ return Math.floor(v).toLocaleString() + "원"; }}
         function fmtMan(v) {{ if (v === 0) return "0"; const isNeg = v < 0; let absV = Math.abs(v); if (absV < 10000) return (isNeg ? "-" : "") + Math.floor(absV).toLocaleString() + "원"; return (isNeg ? "-" : "") + Math.floor(absV / 10000).toLocaleString() + "만"; }}
         function colorForChange(v) {{ return v > 0 ? '#dc2626' : (v < 0 ? '#2563eb' : '#334155'); }}
-        function getBadgeClass(type) {{ if(type.includes('풍차매도')) return 'sell'; if(type.includes('풍차매수') || type.includes('재투자')) return 'reinvest'; if(type.includes('월말평가')) return 'eval-month'; if(type.includes('배당금(인출)')) return 'withdraw'; if(type.includes('배당금')) return 'div'; if(type.includes('최종평가')) return 'eval'; return 'buy'; }}
+        function getBadgeClass(type) {{ if(type.includes('풍차매도')) return 'sell'; if(type.includes('풍차매수') || type.includes('재투자')) return 'reinvest'; if(type.includes('월말평가')) return 'eval-month'; if(type.includes('배당금(인출)')) return 'withdraw'; if(type.includes('배당금(입금)')) return 'div'; if(type.includes('최종평가')) return 'eval'; return 'buy'; }}
         function renderTable() {{
             const k = sel.value; const d = data[k];
             document.getElementById('stat-cards').innerHTML = keys.map(key => {{
