@@ -23,7 +23,7 @@ if 'sim_result_data' not in st.session_state:
 if 'do_run' not in st.session_state:
     st.session_state.do_run = False
 
-# --- 입력값 유지를 위한 세션 상태 초기화 ---
+# --- 입력값 유지를 위한 세션 상태 초기화 (기본값 고정) ---
 if 'last_inputs' not in st.session_state:
     st.session_state.last_inputs = {
         'cash': "5,000,000",
@@ -31,7 +31,7 @@ if 'last_inputs' not in st.session_state:
         'div': "재투자",
         'etf': "498400, 472150, 498400 + 472150",
         'strat': ["거치식 (일괄 매수)"],
-        'strat_wm': ["일괄 매수"]  # 💡 [수정] 기본값을 일괄 매수 1개로 변경
+        'strat_wm': ["일괄 매수"]
     }
 
 if 'saved_cash' not in st.session_state: st.session_state.saved_cash = st.session_state.last_inputs['cash']
@@ -125,10 +125,37 @@ if st.session_state.run_clicked and not st.session_state.show_settings:
 if st.session_state.show_settings:
     st.title("월 배당 ETF 백테스트")
 
+    # 📖 상세 사용 설명서 (접이식 메뉴)
+    with st.expander("📚 시뮬레이터 상세 사용 설명서 (클릭하여 열기)", expanded=False):
+        st.markdown("""
+        ### 🚀 월배당 ETF & 배당풍차 백테스트 가이드
+        본 시뮬레이터는 국내외 월배당 ETF와 **배당풍차(교차 매매)** 전략의 과거 성과를 정교하게 분석하는 도구입니다.
+        
+        ---
+        #### 1️⃣ 투자 환경 설정
+        * **초기 총 투자금:** 시뮬레이션 시작 시점의 원금을 입력합니다.
+        * **백테스트 기간:** `2025.1~2026.4` 또는 `2026` 형식으로 설정 가능합니다.
+        * **배당금 처리:** * **재투자:** 배당금 입금 시 즉시 해당 종목을 추가 매수 (복리 효과)
+            * **인출(생활비):** 배당금을 현금으로 수령하는 시나리오
+
+        #### 2️⃣ 종목 및 매수 방식 선택
+        * **종목 코드:** 최대 4개 비교 가능 (예: `498400`, `QQQ`, `498400 + 472150`)
+        * **단일 종목 방식:** 거치식, 일/주/월 적립식 중 선택
+        * **배당풍차 방식:** 일괄 매수 또는 **4분할/6분할 매수**를 통해 효율성 비교
+
+        #### 3️⃣ 결과 분석 팁
+        * **양방향 연동:** 차트의 선이나 하단 요약 카드를 클릭하면 서로 연동되어 강조 표시됩니다.
+        * **배당금 입금 로직:** 배당락일 기준 권리 확정 후, **실제 현금 입금은 4일 뒤**에 이루어집니다.
+        * **매매 타이밍:** 배당풍차 전략 시, **배당락일 다음 거래일**에 전량 매도 및 교체 매매를 진행합니다.
+
+        ---
+        🔗 **시뮬레이터 링크:** [https://all-simulator-read100page.streamlit.app/](https://all-simulator-read100page.streamlit.app/)
+        """)
+
     st.info("""
     💡 **참고사항 (데이터 한계 및 기준)**
     * **순수 종가 사용:** 수정주가가 아닌 **실제 거래된 일별 종가(Close)**를 기준으로 계산합니다.
-    * **배당 기준 시점:** 배당락일(Ex-Dividend Date)에 권리를 획득하며, **실제 현금 입금 및 재투자는 4일 뒤**에 이루어집니다.
+    * **배당 기준 시점:** 배당락일(Ex-Dividend Date)에 권리를 획득하며, **실제 현금 입금은 4일 뒤**에 이루어집니다.
     * **풍차 매도 시점:** 배당락일 다음 거래일에 전량 매도 후 다음 종목으로 교체합니다.
     """)
 
@@ -228,7 +255,9 @@ if st.session_state.show_settings:
             """, height=0, width=0
         )
 
-    if run_btn:
+    if run_btn or st.session_state.do_run:
+        st.session_state.do_run = False  
+        
         st.session_state.last_inputs = {
             'cash': cash_input, 'period': period_input, 'div': div_action_input,
             'etf': etf_input, 'strat': strategy_options, 'strat_wm': strategy_options_wm
@@ -351,7 +380,8 @@ if st.session_state.show_settings:
                         cash_per = amount / n_split
                         for i in range(n_split):
                             idx = end_idx if i == n_split - 1 else from_idx + int(round(i * step))
-                            scheduled_buys[all_trading_dates[idx]] = scheduled_buys.get(all_trading_dates[idx], 0.0) + cash_per
+                            buy_date = all_trading_dates[idx]
+                            scheduled_buys[buy_date] = scheduled_buys.get(buy_date, 0.0) + cash_per
 
                 if is_windmill_split: schedule_buys(INITIAL_CASH, 0, current_ticker, N_splits)
 
@@ -363,6 +393,7 @@ if st.session_state.show_settings:
                     if month_str not in monthly_data:
                         monthly_data[month_str] = {'div_per_share': 0.0, 'div_total': 0.0, 'end_asset': 0.0, 'end_price': 0.0}
 
+                    # [풍차 핵심] 매도 시점을 배당락일 다음 거래일로 지연
                     if windmill_swap_pending:
                         sell_amount = total_shares * price
                         history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '풍차매도', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': sell_amount, '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
@@ -466,11 +497,12 @@ if st.session_state.show_settings:
             st.rerun()
 
 # ==========================================
-# 결과 출력 영역
+# 결과 출력 영역 (인터랙션 UI)
 # ==========================================
 if st.session_state.run_clicked and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
     datasets = []
+    # 💡 톤다운된 진한 색상 팔레트
     colors = ['#C62828', '#1565C0', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#AD1457', '#9E9D24', '#4527A0', '#00695C']
     for idx, k in enumerate(res['compare_keys']):
         d = res['all_data'][k]
@@ -492,7 +524,7 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
         td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; }}
         tbody tr:nth-child(even) {{ background-color: #f8fafc; }}
         .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; min-width: 45px; text-align: center;}}
-        .buy {{ background: #ef4444; }} .sell {{ background: #3b82f6; }} .div {{ background: #10b981; }} .withdraw {{ background: #f59e0b; }} .reinvest {{ background: #8b5cf6; }} .eval {{ background: #64748b; }} .eval-month {{ background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; }}
+        .buy {{ background: #EF9A9A; }} .sell {{ background: #90CAF9; }} .div {{ background: #A5D6A7; }} .withdraw {{ background: #FFCC80; }} .reinvest {{ background: #B39DDB; }} .eval {{ background: #64748b; }} .eval-month {{ background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; }}
         .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; }}
         .section-icon {{ border-left: 3px solid #3b82f6; padding-left: 8px; }}
     </style>
