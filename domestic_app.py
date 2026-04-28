@@ -506,7 +506,9 @@ if st.session_state.show_settings:
 if st.session_state.run_clicked and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
     datasets = []
-    colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16', '#6366f1', '#14b8a6']
+    
+    # 💡 [핵심 수정] 색상을 훨씬 부드럽고 눈이 편안한 파스텔톤(Muted tones)으로 전면 교체
+    colors = ['#EF9A9A', '#90CAF9', '#A5D6A7', '#FFCC80', '#B39DDB', '#80DEEA', '#F48FB1', '#E6EE9C', '#CE93D8', '#80CBC4']
     
     for idx, k in enumerate(res['compare_keys']):
         d = res['all_data'][k]
