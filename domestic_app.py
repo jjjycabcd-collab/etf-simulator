@@ -20,8 +20,6 @@ if 'run_clicked' not in st.session_state:
     st.session_state.run_clicked = False
 if 'sim_result_data' not in st.session_state:
     st.session_state.sim_result_data = None
-if 'do_run' not in st.session_state:
-    st.session_state.do_run = False
 
 # --- 입력값 유지를 위한 세션 상태 초기화 ---
 if 'last_inputs' not in st.session_state:
@@ -106,7 +104,6 @@ def fetch_prices_and_dividends(code, start_date, end_date):
     except:
         return pd.Series(dtype=float), pd.Series(dtype=float)
 
-# 💡 [핵심 추가 1] 검색된 종목을 설정창에 추가하는 콜백 함수
 def append_to_etf_input(code):
     current_str = st.session_state.saved_etf
     items = [i.strip() for i in current_str.split(',') if i.strip()]
@@ -114,10 +111,6 @@ def append_to_etf_input(code):
         st.toast("⚠️ 최대 4종목까지만 추가할 수 있습니다.", icon="⚠️")
     else:
         st.session_state.saved_etf = current_str + f", {code}" if current_str.strip() else code
-
-# 💡 [핵심 추가 2] 텍스트 입력창에서 엔터 입력 시 실행을 트리거하는 콜백 함수
-def trigger_simulation():
-    st.session_state.do_run = True
 
 # ==========================================
 # UI 영역
@@ -137,7 +130,6 @@ if st.session_state.show_settings:
     * **배당풍차 모드 (A + B):** 입력창에 `498400 + 472150`과 같이 `+`로 연결하여 입력하면 **배당풍차 모드**가 작동합니다. A종목 보유 중 배당락일이 도래하면, 당일 종가에 A종목을 전량 매도하고 즉시 B종목으로 교차 매수하여 배당 주기를 극대화합니다.
     """)
 
-    # 💡 [핵심 수정] 야후 파이낸스를 포함한 실시간 검색 및 추가 UI로 원복
     with st.expander("🔍 종목 코드를 모르시나요? (국내/해외 종목 검색 및 추가)", expanded=False):
         st.markdown("👇 **찾고 싶은 종목명이나 티커(예: QQQ, 삼성전자)를 입력하고 엔터를 치세요.**")
         search_kw = st.text_input("종목 검색어 입력 (입력 후 엔터)", key="search_input_kw")
@@ -147,12 +139,10 @@ if st.session_state.show_settings:
                 search_kw_clean = search_kw.replace(" ", "").lower()
                 matches = []
                 
-                # 1. 국내 데이터 검색
                 for code, name in ALL_TICKERS.items():
                     if search_kw_clean in name.replace(" ", "").lower() or search_kw_clean == code.lower():
                         matches.append((code, name))
                         
-                # 2. 야후 파이낸스 해외 검색
                 try:
                     yf_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={search_kw}&quotesCount=5&newsCount=0"
                     yf_headers = {'User-Agent': 'Mozilla/5.0'}
@@ -191,13 +181,12 @@ if st.session_state.show_settings:
         
         col1, col2 = st.columns(2)
         with col1:
-            # 💡 [핵심 수정] on_change 콜백을 통해 엔터키 입력 시 시뮬레이션 실행
-            cash_input = st.text_input("초기 총 투자금 (원)", key="saved_cash", placeholder="5,000,000", on_change=trigger_simulation)
-            period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", key="saved_period", placeholder="2025.1~2026.4", on_change=trigger_simulation)
+            cash_input = st.text_input("초기 총 투자금 (원)", key="saved_cash", placeholder="5,000,000")
+            period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", key="saved_period", placeholder="2025.1~2026.4")
             div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True, key="saved_div_action")
 
         with col2:
-            etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", key="saved_etf", placeholder="498400, 472150, 498400 + 472150", on_change=trigger_simulation)
+            etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", key="saved_etf", placeholder="498400, 472150, 498400 + 472150")
             
             is_windmill_mode = '+' in etf_input
             strategy_options = st.multiselect(
@@ -208,11 +197,38 @@ if st.session_state.show_settings:
             )
             
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
-
-    # 💡 [핵심 수정] 엔터를 치거나 (do_run == True) 버튼을 눌렀을 때 모두 실행
-    if run_btn or st.session_state.do_run:
-        st.session_state.do_run = False  # 무한 반복 방지를 위해 초기화
         
+        # 💡 [핵심 수정] 엔터키로 실행되도록 감지하는 백그라운드 스크립트 추가
+        components.html(
+            """
+            <script>
+            const doc = window.parent.document;
+            if (!doc.window_enter_bound) {
+                doc.window_enter_bound = true;
+                doc.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') {
+                        const active = doc.activeElement;
+                        if (active && active.tagName === 'INPUT') {
+                            const ariaLabel = active.getAttribute('aria-label') || "";
+                            // 종목 검색창에서 엔터를 친 경우는 시뮬레이션을 실행하지 않고 무시함
+                            if (ariaLabel.includes('검색어')) {
+                                return; 
+                            }
+                        }
+                        const buttons = Array.from(doc.querySelectorAll('button'));
+                        const runBtn = buttons.find(b => b.innerText && b.innerText.includes('시뮬레이션 실행'));
+                        if (runBtn) {
+                            setTimeout(() => { runBtn.click(); }, 50);
+                        }
+                    }
+                });
+            }
+            </script>
+            """,
+            height=0, width=0
+        )
+
+    if run_btn:
         st.session_state.last_inputs = {
             'cash': cash_input,
             'period': period_input,
