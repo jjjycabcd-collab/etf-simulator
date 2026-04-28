@@ -20,8 +20,6 @@ if 'run_clicked' not in st.session_state:
     st.session_state.run_clicked = False
 if 'sim_result_data' not in st.session_state:
     st.session_state.sim_result_data = None
-if 'do_run' not in st.session_state:
-    st.session_state.do_run = False
 
 # --- 입력값 유지를 위한 세션 상태 초기화 ---
 if 'last_inputs' not in st.session_state:
@@ -114,9 +112,6 @@ def append_to_etf_input(code):
     else:
         st.session_state.saved_etf = current_str + f", {code}" if current_str.strip() else code
 
-def trigger_simulation():
-    st.session_state.do_run = True
-
 # ==========================================
 # UI 영역
 # ==========================================
@@ -182,15 +177,15 @@ if st.session_state.show_settings:
         
         col1, col2 = st.columns(2)
         with col1:
-            cash_input = st.text_input("초기 총 투자금 (원)", key="saved_cash", placeholder="5,000,000", on_change=trigger_simulation)
-            period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", key="saved_period", placeholder="2025.1~2026.4", on_change=trigger_simulation)
+            # 💡 [버그 수정] on_change를 제거하여 글씨를 지우고 마우스를 밖으로 클릭해도 실행되지 않게 함
+            cash_input = st.text_input("초기 총 투자금 (원)", key="saved_cash", placeholder="5,000,000")
+            period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", key="saved_period", placeholder="2025.1~2026.4")
         with col2:
-            etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", key="saved_etf", placeholder="498400, 472150, 498400 + 472150", on_change=trigger_simulation)
+            etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", key="saved_etf", placeholder="498400, 472150, 498400 + 472150")
             div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True, key="saved_div_action")
 
-        st.divider() # 💡 깔끔한 시각적 분리를 위한 구분선 추가
+        st.divider() 
         
-        # 💡 [핵심 수정] 매수 방식 설정 창을 하단으로 완전히 분리
         col3, col4 = st.columns(2)
         with col3:
             strategy_options = st.multiselect(
@@ -199,14 +194,18 @@ if st.session_state.show_settings:
                 key="saved_strategy"
             )
         with col4:
+            # 💡 [버그 수정] '+' 기호가 종목창에 없을 경우 이 필터를 완벽히 비활성화 시킴
+            has_wm = '+' in etf_input
             strategy_options_wm = st.multiselect(
                 "배당풍차 매수 방식 (복수 선택 가능)",
                 ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"],
-                key="saved_strategy_wm"
+                key="saved_strategy_wm",
+                disabled=not has_wm
             )
             
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
         
+        # 💡 [버그 수정] 자바스크립트가 직접 시뮬레이션 실행 버튼을 클릭하도록 처리 (엔터키 전용)
         components.html(
             """
             <script>
@@ -222,7 +221,7 @@ if st.session_state.show_settings:
                         }
                         const buttons = Array.from(doc.querySelectorAll('button'));
                         const runBtn = buttons.find(b => b.innerText && b.innerText.includes('시뮬레이션 실행'));
-                        if (runBtn) setTimeout(() => { runBtn.click(); }, 50);
+                        if (runBtn) setTimeout(() => { runBtn.click(); }, 150);
                     }
                 });
             }
@@ -230,9 +229,7 @@ if st.session_state.show_settings:
             """, height=0, width=0
         )
 
-    if run_btn or st.session_state.do_run:
-        st.session_state.do_run = False  
-        
+    if run_btn:
         st.session_state.last_inputs = {
             'cash': cash_input, 'period': period_input, 'div': div_action_input,
             'etf': etf_input, 'strat': strategy_options, 'strat_wm': strategy_options_wm
@@ -268,7 +265,6 @@ if st.session_state.show_settings:
             strats_single = strategy_options if strategy_options else ["거치식 (일괄 매수)"]
             strats_wm = strategy_options_wm if strategy_options_wm else ["일괄 매수"]
 
-            # 💡 [핵심 수정] 섞어서 입력된 종목 코드를 알아서 분리하여 해당하는 전략 필터를 적용
             for t in raw_target_strs:
                 if '+' in t:
                     for strat in strats_wm:
