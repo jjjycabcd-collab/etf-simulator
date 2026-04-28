@@ -31,7 +31,7 @@ if 'last_inputs' not in st.session_state:
         'div': "재투자",
         'etf': "498400, 472150, 498400 + 472150",
         'strat': ["거치식 (일괄 매수)"],
-        'strat_wm': ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"]
+        'strat_wm': ["일괄 매수"]  # 💡 [수정] 기본값을 일괄 매수 1개로 변경
     }
 
 if 'saved_cash' not in st.session_state: st.session_state.saved_cash = st.session_state.last_inputs['cash']
@@ -114,9 +114,6 @@ def append_to_etf_input(code):
     else:
         st.session_state.saved_etf = current_str + f", {code}" if current_str.strip() else code
 
-def trigger_simulation():
-    st.session_state.do_run = True
-
 # ==========================================
 # UI 영역
 # ==========================================
@@ -131,8 +128,8 @@ if st.session_state.show_settings:
     st.info("""
     💡 **참고사항 (데이터 한계 및 기준)**
     * **순수 종가 사용:** 수정주가가 아닌 **실제 거래된 일별 종가(Close)**를 기준으로 계산합니다.
-    * **배당 기준 시점:** 배당락일(Ex-Dividend Date)에 권리를 획득하며, **실제 현금 입금은 4일 뒤**에 이루어집니다.
-    * **풍차 매도 시점:** 배당락일 당일이 아닌 **배당락일 다음 거래일**에 전량 매도 후 다음 종목으로 교체합니다.
+    * **배당 기준 시점:** 배당락일(Ex-Dividend Date)에 권리를 획득하며, **실제 현금 입금 및 재투자는 4일 뒤**에 이루어집니다.
+    * **풍차 매도 시점:** 배당락일 다음 거래일에 전량 매도 후 다음 종목으로 교체합니다.
     """)
 
     with st.expander("🔍 종목 코드를 모르시나요? (국내/해외 종목 검색 및 추가)", expanded=False):
@@ -231,9 +228,7 @@ if st.session_state.show_settings:
             """, height=0, width=0
         )
 
-    if run_btn or st.session_state.do_run:
-        st.session_state.do_run = False  
-        
+    if run_btn:
         st.session_state.last_inputs = {
             'cash': cash_input, 'period': period_input, 'div': div_action_input,
             'etf': etf_input, 'strat': strategy_options, 'strat_wm': strategy_options_wm
@@ -368,7 +363,6 @@ if st.session_state.show_settings:
                     if month_str not in monthly_data:
                         monthly_data[month_str] = {'div_per_share': 0.0, 'div_total': 0.0, 'end_asset': 0.0, 'end_price': 0.0}
 
-                    # 💡 [풍차 핵심 수정] 매도 시점을 배당락일 다음 거래일로 지연
                     if windmill_swap_pending:
                         sell_amount = total_shares * price
                         history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '풍차매도', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': sell_amount, '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
@@ -384,7 +378,6 @@ if st.session_state.show_settings:
                             reinvest_flag = True
                         windmill_swap_pending = False
 
-                    # 배당락일 (권리 획득)
                     div = processed_data[current_ticker][1][date]
                     if div > 0 and total_shares > 0:
                         div_amount = total_shares * float(div)
@@ -398,10 +391,8 @@ if st.session_state.show_settings:
                         pending_dividends[actual_payout_date].append({
                             'amount': div_amount, 'ticker': current_ticker, 'div_per_share': float(div), 'shares': int(total_shares)
                         })
-                        # 💡 다음 거래일에 매도하도록 예약
                         if is_windmill: windmill_swap_pending = True
 
-                    # 배당금 실제 입금 처리 (+4일)
                     if date in pending_dividends:
                         for p_div in pending_dividends[date]:
                             amt = p_div['amount']
@@ -421,7 +412,6 @@ if st.session_state.show_settings:
                                 '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))
                             })
 
-                    # 매수 처리
                     if not is_windmill_split and date in invest_dates_set:
                         reserve_cash -= (INITIAL_CASH / len(invest_dates_set))
                         available_cash += (INITIAL_CASH / len(invest_dates_set))
@@ -476,7 +466,7 @@ if st.session_state.show_settings:
             st.rerun()
 
 # ==========================================
-# 결과 출력 영역 (UI 스타일 및 스크립트)
+# 결과 출력 영역
 # ==========================================
 if st.session_state.run_clicked and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
