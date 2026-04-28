@@ -21,17 +21,22 @@ if 'run_clicked' not in st.session_state:
 if 'sim_result_data' not in st.session_state:
     st.session_state.sim_result_data = None
 
-# --- 입력값 유지를 위한 세션 상태 초기화 ---
-if 'saved_cash' not in st.session_state:
-    st.session_state.saved_cash = "5,000,000"
-if 'saved_period' not in st.session_state:
-    st.session_state.saved_period = "2025.1~2026.4"
-if 'saved_div_action' not in st.session_state:
-    st.session_state.saved_div_action = "재투자"
-if 'saved_etf' not in st.session_state:
-    st.session_state.saved_etf = "498400, 472150, 498400 + 472150"
-if 'saved_strategy' not in st.session_state:
-    st.session_state.saved_strategy = ["거치식 (일괄 매수)"]
+# 💡 [핵심 수정] 위젯이 화면에서 사라져도 값을 기억하는 '영구 보관소' 생성
+if 'last_inputs' not in st.session_state:
+    st.session_state.last_inputs = {
+        'cash': "5,000,000",
+        'period': "2025.1~2026.4",
+        'div': "재투자",
+        'etf': "498400, 472150, 498400 + 472150",
+        'strat': ["거치식 (일괄 매수)"]
+    }
+
+# 보관소의 값을 위젯 상태로 복구 (다시 설정하기를 누를 때마다 실행됨)
+if 'saved_cash' not in st.session_state: st.session_state.saved_cash = st.session_state.last_inputs['cash']
+if 'saved_period' not in st.session_state: st.session_state.saved_period = st.session_state.last_inputs['period']
+if 'saved_div_action' not in st.session_state: st.session_state.saved_div_action = st.session_state.last_inputs['div']
+if 'saved_etf' not in st.session_state: st.session_state.saved_etf = st.session_state.last_inputs['etf']
+if 'saved_strategy' not in st.session_state: st.session_state.saved_strategy = st.session_state.last_inputs['strat']
 
 # ==========================================
 # 종목 데이터 마스터 적재 (캐싱)
@@ -41,7 +46,6 @@ def load_all_tickers():
     """국내 상장 주식 및 ETF 전체 목록 수집"""
     tickers = {}
     
-    # 1. 국내 주식 전체 마스터 로드 (한국거래소 KIND)
     try:
         url = "http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
@@ -56,7 +60,6 @@ def load_all_tickers():
         fallback = {"005930": "삼성전자", "000660": "SK하이닉스", "035420": "NAVER", "035720": "카카오", "005380": "현대차"}
         tickers.update(fallback)
 
-    # 2. 국내 ETF 전체 마스터 로드 (네이버 금융 API)
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         res = requests.get("https://finance.naver.com/api/sise/etfItemList.nhn", headers=headers, timeout=5)
@@ -75,7 +78,7 @@ ALL_TICKERS = load_all_tickers()
 # ==========================================
 @st.cache_data(ttl=86400)
 def get_stock_info(code):
-    """종목명 가져오기 (마스터 데이터 및 yfinance 활용)"""
+    """종목명 가져오기"""
     if not code: return ""
     if code in ALL_TICKERS:
         return f"{ALL_TICKERS[code]}({code})"
@@ -116,7 +119,7 @@ def add_ticker_to_input():
     sel = st.session_state.auto_search
     if sel:
         code = sel.split('(')[-1].replace(')', '').strip()
-        current_str = st.session_state.saved_etf  # 입력창과 실시간 동기화된 데이터 읽기
+        current_str = st.session_state.saved_etf  
         
         items = [i.strip() for i in current_str.split(',') if i.strip()]
         
@@ -165,15 +168,14 @@ if st.session_state.show_settings:
     with st.container(border=True):
         st.subheader("⚙️ 테스트 환경")
         
-        # 💡 form을 제거하고 실시간 key 바인딩 방식으로 변경
         col1, col2 = st.columns(2)
         with col1:
-            cash_input = st.text_input("초기 총 투자금 (원)", key="saved_cash")
-            period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", key="saved_period")
+            cash_input = st.text_input("초기 총 투자금 (원)", key="saved_cash", placeholder="5,000,000")
+            period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", key="saved_period", placeholder="2025.1~2026.4")
             div_action_input = st.radio("배당금 처리", ["재투자", "인출(생활비)"], horizontal=True, key="saved_div_action")
 
         with col2:
-            etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", key="saved_etf")
+            etf_input = st.text_input("종목 코드 (최대 4개, 배당풍차는 + 기호 사용)", key="saved_etf", placeholder="498400, 472150, 498400 + 472150")
             strategy_options = st.multiselect(
                 "분할 매수 방식 (단일 종목 시 적용)",
                 ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
@@ -183,25 +185,39 @@ if st.session_state.show_settings:
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
 
     if run_btn:
+        # 💡 [핵심 수정] 위젯이 숨겨지기 직전에 현재 입력된 값을 안전한 보관소에 백업
+        st.session_state.last_inputs = {
+            'cash': cash_input,
+            'period': period_input,
+            'div': div_action_input,
+            'etf': etf_input,
+            'strat': strategy_options
+        }
+
         with st.spinner('배당풍차 및 주가 데이터를 통합 분석 중...'):
-            INITIAL_CASH = float(re.sub(r'[^0-9.]', '', cash_input))
+            safe_cash = cash_input if cash_input and cash_input.strip() else "5000000"
+            clean_cash = re.sub(r'[^0-9.]', '', safe_cash)
+            INITIAL_CASH = float(clean_cash) if clean_cash else 5000000.0
+            
+            safe_period = period_input if period_input and period_input.strip() else "2025.1~2026.4"
+            safe_etf = etf_input if etf_input and etf_input.strip() else "498400, 472150, 498400 + 472150"
             
             try:
-                if '~' in period_input:
-                    s_str, e_str = period_input.split('~')
+                if '~' in safe_period:
+                    s_str, e_str = safe_period.split('~')
                     start_dt = pd.to_datetime(s_str.strip().replace('.', '-')) if '.' in s_str else pd.to_datetime(f"{s_str.strip()}-01-01")
                     end_dt = pd.to_datetime(e_str.strip().replace('.', '-')) + pd.offsets.MonthEnd(0) if '.' in e_str else pd.to_datetime(f"{e_str.strip()}-12-31")
                 else:
-                    if '.' in period_input:
-                        start_dt = pd.to_datetime(period_input.strip().replace('.', '-'))
+                    if '.' in safe_period:
+                        start_dt = pd.to_datetime(safe_period.strip().replace('.', '-'))
                         end_dt = start_dt + pd.offsets.MonthEnd(0)
                     else:
-                        start_dt = pd.to_datetime(f"{period_input.strip()}-01-01")
-                        end_dt = pd.to_datetime(f"{period_input.strip()}-12-31")
+                        start_dt = pd.to_datetime(f"{safe_period.strip()}-01-01")
+                        end_dt = pd.to_datetime(f"{safe_period.strip()}-12-31")
             except:
                 start_dt, end_dt = pd.to_datetime("2025-01-01"), pd.to_datetime("2026-04-30")
 
-            raw_target_strs = [t.strip().upper() for t in etf_input.split(',') if t.strip()][:4]
+            raw_target_strs = [t.strip().upper() for t in safe_etf.split(',') if t.strip()][:4]
             targets = []
             compare_keys = [] 
             
