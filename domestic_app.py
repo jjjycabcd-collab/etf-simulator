@@ -31,7 +31,7 @@ if 'last_inputs' not in st.session_state:
         'div': "재투자",
         'etf': "498400, 472150, 498400 + 472150",
         'strat': ["거치식 (일괄 매수)"],
-        'strat_wm': ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"]
+        'strat_wm': ["일괄 매수"]
     }
 
 if 'saved_cash' not in st.session_state: st.session_state.saved_cash = st.session_state.last_inputs['cash']
@@ -342,7 +342,6 @@ if st.session_state.show_settings:
                 pending_dividends = {}
                 scheduled_buys = {}
 
-                # 💡 [핵심 알고리즘 수정] 배당락일 D-1에 마지막 분할 매수가 마감되도록 정교한 타임라인 세팅
                 def schedule_buys(amount, from_idx, target_tk, n_split):
                     if amount <= 0: return
                     if n_split == 1:
@@ -366,7 +365,6 @@ if st.session_state.show_settings:
                         step = (end_idx - from_idx) / (n_split - 1)
                         cash_per = amount / n_split
                         for i in range(n_split):
-                            # 마지막 회차는 무조건 end_idx (배당락일 전날 D-1)에 박히도록 보정
                             idx = end_idx if i == n_split - 1 else from_idx + int(round(i * step))
                             buy_date = all_trading_dates[idx]
                             scheduled_buys[buy_date] = scheduled_buys.get(buy_date, 0.0) + cash_per
@@ -509,16 +507,26 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
     datasets = []
     colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16', '#6366f1', '#14b8a6']
+    
     for idx, k in enumerate(res['compare_keys']):
         d = res['all_data'][k]
-        datasets.append({'label': d['name'], 'data': d['chart_values'], 'borderColor': colors[idx % len(colors)], 'tension': 0.3, 'fill': False})
+        datasets.append({
+            'label': d['name'], 
+            'data': d['chart_values'], 
+            'borderColor': colors[idx % len(colors)],
+            'backgroundColor': colors[idx % len(colors)],
+            'tension': 0.3, 
+            'fill': False,
+            'borderWidth': 2
+        })
 
     html_code = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; color: #334155; }}
         .card-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px; }}
-        .card {{ background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-top: 4px solid #94a3b8; }}
+        .card {{ background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-top: 4px solid #94a3b8; transition: all 0.2s ease; cursor: pointer; }}
+        .card:hover {{ transform: translateY(-2px); box-shadow: 0 5px 10px rgba(0,0,0,0.1); }}
         .card h3 {{ font-size: 14px; margin: 0 0 10px 0; color:#1e293b; font-weight:700; }}
         .card-row {{ display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px; color:#475569; }}
         .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 350px; margin-bottom: 20px; }}
@@ -537,35 +545,111 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
     </head><body>
     <div class="chart-container"><canvas id="assetChart"></canvas></div>
     <div class="card-grid" id="stat-cards"></div>
-    <div style="margin-bottom: 15px; display:flex; justify-content:flex-end;"><select id="ticker-select" class="sort-select" style="min-width: 250px;" onchange="renderTable()"></select></div>
-    <div class="header-flex"><div style="display:flex; align-items:center; gap:10px;"><span class="section-icon" style="font-weight:700; font-size:16px;">🗓️ 월별 요약</span></div><select id="sort-select-monthly" class="sort-select" onchange="renderTable()"><option value="asc">과거순</option><option value="desc">최신순</option></select></div>
+    <div style="margin-bottom: 15px; display:flex; justify-content:flex-end;"><select id="ticker-select" class="sort-select" style="min-width: 250px;" onchange="onDropdownChange()"></select></div>
+    <div class="header-flex"><div style="display:flex; align-items:center; gap:10px;"><span class="section-icon" style="font-weight:700; font-size:16px;">🗓️ 월별 요약</span></div><select id="sort-select-monthly" class="sort-select" onchange="renderTablesOnly()"><option value="asc">과거순</option><option value="desc">최신순</option></select></div>
     <div class="table-wrapper"><table><thead><tr><th>기간</th><th>주당배당</th><th>배당률</th><th>배당합계</th><th>기말자산</th><th>증감</th></tr></thead><tbody id="monthly-tbody"></tbody></table></div>
-    <div class="header-flex"><div style="display:flex; align-items:center; gap:10px;"><span class="section-icon" style="font-weight:700; font-size:16px;">🔍 상세 거래 내역</span></div><select id="sort-select-history" class="sort-select" onchange="renderTable()"><option value="asc">과거순</option><option value="desc">최신순</option></select></div>
+    <div class="header-flex"><div style="display:flex; align-items:center; gap:10px;"><span class="section-icon" style="font-weight:700; font-size:16px;">🔍 상세 거래 내역</span></div><select id="sort-select-history" class="sort-select" onchange="renderTablesOnly()"><option value="asc">과거순</option><option value="desc">최신순</option></select></div>
     <div class="table-wrapper"><table><thead><tr><th>날짜</th><th>구분</th><th>종목</th><th>단가/분배금</th><th>수량</th><th>금액</th><th>현금잔고</th><th>총자산</th></tr></thead><tbody id="tbody"></tbody></table></div>
     <script>
         const data = {json.dumps(res['all_data'])};
         const keys = {json.dumps(res['compare_keys'])};
         const labels = {json.dumps(res['labels'])};
-        const sel = document.getElementById('ticker-select');
-        keys.forEach(k => sel.add(new Option(data[k].name, k)));
-        function fmt(v) {{ return Math.floor(v).toLocaleString() + "원"; }}
-        function fmtMan(v) {{ if (v === 0) return "0"; const isNeg = v < 0; let absV = Math.abs(v); if (absV < 10000) return (isNeg ? "-" : "") + Math.floor(absV).toLocaleString() + "원"; return (isNeg ? "-" : "") + Math.floor(absV / 10000).toLocaleString() + "만"; }}
-        function colorForChange(v) {{ return v > 0 ? '#dc2626' : (v < 0 ? '#2563eb' : '#334155'); }}
-        function getBadgeClass(type) {{ if(type.includes('풍차매도')) return 'sell'; if(type.includes('매수')) return 'reinvest'; if(type.includes('월말평가')) return 'eval-month'; if(type.includes('배당금(인출)')) return 'withdraw'; if(type.includes('배당금(입금)')) return 'div'; if(type.includes('최종평가')) return 'eval'; return 'buy'; }}
-        function renderTable() {{
-            const k = sel.value; const d = data[k];
-            document.getElementById('stat-cards').innerHTML = keys.map(key => {{
+        const colors = {json.dumps(colors)};
+        const datasets = {json.dumps(datasets)};
+        let chartInstance = null;
+        let currentIndex = 0;
+
+        function init() {{
+            const sel = document.getElementById('ticker-select');
+            keys.forEach(k => sel.add(new Option(data[k].name, k)));
+
+            document.getElementById('stat-cards').innerHTML = keys.map((key, i) => {{
                 const item = data[key]; const isWithdrawal = item.div_action === '인출(생활비)'; const assetLabel = isWithdrawal ? '평가 자산' : '최종 자산';
                 let withdrawRow = isWithdrawal ? `<div class="card-row"><span>누적 인출금</span><span style="color:#10b981; font-weight:600;">+${{fmt(item.total_withdrawn)}}</span></div>` : '';
-                return `<div class="card" style="border-top-color: ${{key===k?'#ef4444':'#94a3b8'}}"><h3>${{item.name}}</h3><div class="card-row"><span>초기 투자금</span><strong>${{fmt(item.initial_cash)}}</strong></div><div class="card-row"><span>총 배당금</span><span style="color:#d97706; font-weight:600;">+${{fmt(item.total_dividend)}}</span></div><div class="card-row"><span>${{assetLabel}}</span><strong>${{fmt(item.final_asset)}}</strong></div>${{withdrawRow}}<div class="card-row"><span>총 수익금</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${{fmt(item.total_profit)}} (${{item.profit_rate.toFixed(2)}}%)</span></div></div>`;
+                return `<div class="card" id="card-${{i}}" onclick="selectItem(${{i}})" style="border-top-color: ${{colors[i % colors.length]}};">
+                    <h3>${{item.name}}</h3>
+                    <div class="card-row"><span>초기 투자금</span><strong>${{fmt(item.initial_cash)}}</strong></div>
+                    <div class="card-row"><span>총 배당금</span><span style="color:#d97706; font-weight:600;">+${{fmt(item.total_dividend)}}</span></div>
+                    <div class="card-row"><span>${{assetLabel}}</span><strong>${{fmt(item.final_asset)}}</strong></div>
+                    ${{withdrawRow}}
+                    <div class="card-row"><span>총 수익금</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${{fmt(item.total_profit)}} (${{item.profit_rate.toFixed(2)}}%)</span></div>
+                </div>`;
             }}).join('');
+
+            chartInstance = new Chart(document.getElementById('assetChart'), {{
+                type: 'line',
+                data: {{ labels: labels, datasets: datasets }},
+                options: {{
+                    responsive: true, maintainAspectRatio: false,
+                    interaction: {{ mode: 'nearest', axis: 'x', intersect: false }},
+                    plugins: {{
+                        legend: {{
+                            onClick: (e, legendItem, legend) => {{ selectItem(legendItem.datasetIndex); }}
+                        }}
+                    }},
+                    onClick: (e, elements, chart) => {{
+                        const points = chart.getElementsAtEventForMode(e, 'nearest', {{ intersect: true }}, true);
+                        if (points.length > 0) selectItem(points[0].datasetIndex);
+                    }},
+                    scales: {{ y: {{ ticks: {{ callback: v => (v/10000) + '만' }} }} }}
+                }}
+            }});
+
+            selectItem(0); 
+        }}
+
+        function selectItem(index) {{
+            currentIndex = index;
+            document.getElementById('ticker-select').value = keys[index];
+
+            // Update Cards visual state
+            keys.forEach((k, i) => {{
+                const card = document.getElementById(`card-${{i}}`);
+                if (i === index) {{
+                    card.style.opacity = '1';
+                    card.style.transform = 'translateY(-4px)';
+                    card.style.boxShadow = `0 0 0 2px ${{colors[i % colors.length]}}, 0 10px 15px -3px rgba(0,0,0,0.15)`;
+                }} else {{
+                    card.style.opacity = '0.4';
+                    card.style.transform = 'translateY(0)';
+                    card.style.boxShadow = '0 2px 5px rgba(0,0,0,0.05)';
+                }}
+            }});
+
+            // Update Chart visual state
+            chartInstance.data.datasets.forEach((ds, i) => {{
+                if (i === index) {{
+                    ds.borderWidth = 4;
+                    ds.borderColor = colors[i % colors.length];
+                }} else {{
+                    ds.borderWidth = 1.5;
+                    ds.borderColor = colors[i % colors.length] + '40'; // 25% opacity
+                }}
+            }});
+            chartInstance.update();
+
+            renderTablesOnly();
+        }}
+
+        function onDropdownChange() {{
+            const val = document.getElementById('ticker-select').value;
+            selectItem(keys.indexOf(val));
+        }}
+
+        function renderTablesOnly() {{
+            const d = data[keys[currentIndex]];
             let monthlyData = d.monthly_summary.slice(); if (document.getElementById('sort-select-monthly').value === 'desc') monthlyData.reverse(); 
             document.getElementById('monthly-tbody').innerHTML = monthlyData.map(m => `<tr><td>${{m.기간}}</td><td>${{Math.floor(m.주당배당).toLocaleString()}}</td><td style="color:#d97706; font-weight:600;">${{m.배당률.toFixed(2)}}%</td><td>${{m.배당합계 > 0 ? fmtMan(m.배당합계) : '-'}}</td><td style="font-weight:600;">${{fmtMan(m.기말자산)}}</td><td style="color:${{colorForChange(m.증감)}}; font-weight:600;">${{m.증감 > 0 ? '+' : ''}}${{fmtMan(m.증감)}}</td></tr>`).join('');
             let historyData = d.history.slice(); if (document.getElementById('sort-select-history').value === 'desc') historyData.reverse(); 
             document.getElementById('tbody').innerHTML = historyData.map(h => `<tr><td>${{h.날짜}}</td><td><span class="badge ${{getBadgeClass(h.구분)}}">${{h.구분}}</span></td><td style="color:#64748b; font-weight:600;">${{h.종목}}</td><td>${{fmt(h.단가)}}</td><td>${{h.수량.toLocaleString()}}</td><td>${{h.거래금액 > 0 ? fmt(h.거래금액) : '-'}}</td><td>${{fmt(h.현금잔고)}}</td><td><strong>${{fmt(h.총자산)}}</strong></td></tr>`).join('');
         }}
-        new Chart(document.getElementById('assetChart'), {{ type: 'line', data: {{ labels: labels, datasets: {json.dumps(datasets)} }}, options: {{ responsive: true, maintainAspectRatio: false, scales: {{ y: {{ ticks: {{ callback: v => (v/10000) + '만' }} }} }} }} }});
-        renderTable();
+
+        function fmt(v) {{ return Math.floor(v).toLocaleString() + "원"; }}
+        function fmtMan(v) {{ if (v === 0) return "0"; const isNeg = v < 0; let absV = Math.abs(v); if (absV < 10000) return (isNeg ? "-" : "") + Math.floor(absV).toLocaleString() + "원"; return (isNeg ? "-" : "") + Math.floor(absV / 10000).toLocaleString() + "만"; }}
+        function colorForChange(v) {{ return v > 0 ? '#dc2626' : (v < 0 ? '#2563eb' : '#334155'); }}
+        function getBadgeClass(type) {{ if(type.includes('풍차매도')) return 'sell'; if(type.includes('매수')) return 'reinvest'; if(type.includes('월말평가')) return 'eval-month'; if(type.includes('배당금(인출)')) return 'withdraw'; if(type.includes('배당금(입금)')) return 'div'; if(type.includes('최종평가')) return 'eval'; return 'buy'; }}
+        
+        init();
     </script></body></html>
     """
     components.html(html_code, height=2000, scrolling=True)
