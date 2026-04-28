@@ -20,6 +20,8 @@ if 'run_clicked' not in st.session_state:
     st.session_state.run_clicked = False
 if 'sim_result_data' not in st.session_state:
     st.session_state.sim_result_data = None
+if 'do_run' not in st.session_state:
+    st.session_state.do_run = False
 
 # --- 입력값 유지를 위한 세션 상태 초기화 ---
 if 'last_inputs' not in st.session_state:
@@ -29,7 +31,7 @@ if 'last_inputs' not in st.session_state:
         'div': "재투자",
         'etf': "498400, 472150, 498400 + 472150",
         'strat': ["거치식 (일괄 매수)"],
-        'strat_wm': ["일괄 매수"]
+        'strat_wm': ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"]
     }
 
 if 'saved_cash' not in st.session_state: st.session_state.saved_cash = st.session_state.last_inputs['cash']
@@ -177,7 +179,6 @@ if st.session_state.show_settings:
         
         col1, col2 = st.columns(2)
         with col1:
-            # 💡 [버그 수정] on_change를 제거하여 글씨를 지우고 마우스를 밖으로 클릭해도 실행되지 않게 함
             cash_input = st.text_input("초기 총 투자금 (원)", key="saved_cash", placeholder="5,000,000")
             period_input = st.text_input("백테스트 기간 (예: 2025 또는 2025.1~2026.4)", key="saved_period", placeholder="2025.1~2026.4")
         with col2:
@@ -194,7 +195,6 @@ if st.session_state.show_settings:
                 key="saved_strategy"
             )
         with col4:
-            # 💡 [버그 수정] '+' 기호가 종목창에 없을 경우 이 필터를 완벽히 비활성화 시킴
             has_wm = '+' in etf_input
             strategy_options_wm = st.multiselect(
                 "배당풍차 매수 방식 (복수 선택 가능)",
@@ -205,7 +205,6 @@ if st.session_state.show_settings:
             
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
         
-        # 💡 [버그 수정] 자바스크립트가 직접 시뮬레이션 실행 버튼을 클릭하도록 처리 (엔터키 전용)
         components.html(
             """
             <script>
@@ -229,7 +228,9 @@ if st.session_state.show_settings:
             """, height=0, width=0
         )
 
-    if run_btn:
+    if run_btn or st.session_state.do_run:
+        st.session_state.do_run = False  
+        
         st.session_state.last_inputs = {
             'cash': cash_input, 'period': period_input, 'div': div_action_input,
             'etf': etf_input, 'strat': strategy_options, 'strat_wm': strategy_options_wm
@@ -341,6 +342,7 @@ if st.session_state.show_settings:
                 pending_dividends = {}
                 scheduled_buys = {}
 
+                # 💡 [핵심 알고리즘 수정] 배당락일 D-1에 마지막 분할 매수가 마감되도록 정교한 타임라인 세팅
                 def schedule_buys(amount, from_idx, target_tk, n_split):
                     if amount <= 0: return
                     if n_split == 1:
@@ -358,14 +360,16 @@ if st.session_state.show_settings:
                     else:
                         end_idx = min(len(all_trading_dates)-1, from_idx + 20)
                         
-                    if end_idx == from_idx:
+                    if end_idx <= from_idx:
                         scheduled_buys[all_trading_dates[from_idx]] = scheduled_buys.get(all_trading_dates[from_idx], 0.0) + amount
                     else:
                         step = (end_idx - from_idx) / (n_split - 1)
                         cash_per = amount / n_split
                         for i in range(n_split):
-                            idx = from_idx + int(round(i * step))
-                            scheduled_buys[all_trading_dates[idx]] = scheduled_buys.get(all_trading_dates[idx], 0.0) + cash_per
+                            # 마지막 회차는 무조건 end_idx (배당락일 전날 D-1)에 박히도록 보정
+                            idx = end_idx if i == n_split - 1 else from_idx + int(round(i * step))
+                            buy_date = all_trading_dates[idx]
+                            scheduled_buys[buy_date] = scheduled_buys.get(buy_date, 0.0) + cash_per
 
                 if is_windmill_split:
                     schedule_buys(INITIAL_CASH, 0, current_ticker, N_splits)
@@ -534,9 +538,9 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
     <div class="chart-container"><canvas id="assetChart"></canvas></div>
     <div class="card-grid" id="stat-cards"></div>
     <div style="margin-bottom: 15px; display:flex; justify-content:flex-end;"><select id="ticker-select" class="sort-select" style="min-width: 250px;" onchange="renderTable()"></select></div>
-    <div class="header-flex"><div style="display:flex; align-items:center; gap:10px;"><span class="section-icon" style="font-weight:700; font-size:16px;">🗓️ 월별 요약</span></div><select id="sort-select-monthly" class="sort-select" onchange="renderTable()"><option value="desc">최신순</option><option value="asc">과거순</option></select></div>
+    <div class="header-flex"><div style="display:flex; align-items:center; gap:10px;"><span class="section-icon" style="font-weight:700; font-size:16px;">🗓️ 월별 요약</span></div><select id="sort-select-monthly" class="sort-select" onchange="renderTable()"><option value="asc">과거순</option><option value="desc">최신순</option></select></div>
     <div class="table-wrapper"><table><thead><tr><th>기간</th><th>주당배당</th><th>배당률</th><th>배당합계</th><th>기말자산</th><th>증감</th></tr></thead><tbody id="monthly-tbody"></tbody></table></div>
-    <div class="header-flex"><div style="display:flex; align-items:center; gap:10px;"><span class="section-icon" style="font-weight:700; font-size:16px;">🔍 상세 거래 내역</span></div><select id="sort-select-history" class="sort-select" onchange="renderTable()"><option value="desc">최신순</option><option value="asc">과거순</option></select></div>
+    <div class="header-flex"><div style="display:flex; align-items:center; gap:10px;"><span class="section-icon" style="font-weight:700; font-size:16px;">🔍 상세 거래 내역</span></div><select id="sort-select-history" class="sort-select" onchange="renderTable()"><option value="asc">과거순</option><option value="desc">최신순</option></select></div>
     <div class="table-wrapper"><table><thead><tr><th>날짜</th><th>구분</th><th>종목</th><th>단가/분배금</th><th>수량</th><th>금액</th><th>현금잔고</th><th>총자산</th></tr></thead><tbody id="tbody"></tbody></table></div>
     <script>
         const data = {json.dumps(res['all_data'])};
