@@ -1,3 +1,14 @@
+import sys
+import pandas as pd
+import re
+import json
+import datetime
+import requests
+import io
+import yfinance as yf
+import streamlit as st
+import streamlit.components.v1 as components
+
 # ==========================================
 # 웹 페이지 기본 설정 및 상태 초기화
 # ==========================================
