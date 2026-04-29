@@ -125,7 +125,6 @@ if st.session_state.run_clicked and not st.session_state.show_settings:
 if st.session_state.show_settings:
     st.title("월 배당 ETF 백테스트")
 
-    # 📖 상세 사용 설명서 (접이식 메뉴)
     with st.expander("📚 시뮬레이터 상세 사용 설명서 (클릭하여 열기)", expanded=False):
         st.markdown("""
         ### 🚀 월배당 ETF & 배당풍차 백테스트 가이드
@@ -147,9 +146,6 @@ if st.session_state.show_settings:
         * **양방향 연동:** 차트의 선이나 하단 요약 카드를 클릭하면 서로 연동되어 강조 표시됩니다.
         * **배당금 입금 로직:** 배당락일 기준 권리 확정 후, **실제 현금 입금은 4일 뒤**에 이루어집니다.
         * **매매 타이밍:** 배당풍차 전략 시, **배당락일 다음 거래일**에 전량 매도 및 교체 매매를 진행합니다.
-
-        ---
-        🔗 **시뮬레이터 링크:** [https://all-simulator-read100page.streamlit.app/](https://all-simulator-read100page.streamlit.app/)
         """)
 
     st.info("""
@@ -510,32 +506,71 @@ if st.session_state.run_clicked and st.session_state.sim_result_data:
 
     html_code = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; color: #334155; }}
-        .card-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px; }}
+        body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; color: #334155; margin: 0; }}
+        .card-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 20px; }}
         .card {{ background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-top: 4px solid #94a3b8; transition: all 0.2s ease; cursor: pointer; }}
         .card:hover {{ transform: translateY(-2px); box-shadow: 0 5px 10px rgba(0,0,0,0.1); }}
         .card h3 {{ font-size: 14px; margin: 0 0 10px 0; color:#1e293b; font-weight:700; }}
         .card-row {{ display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px; color:#475569; }}
-        .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 350px; margin-bottom: 20px; }}
-        .table-wrapper {{ overflow-x: auto; background: white; border-radius: 10px; margin-bottom: 30px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }}
-        table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-        th {{ background: #f8fafc; padding: 12px 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600; border-top: 1px solid #e2e8f0; }}
-        td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; }}
+        .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 350px; margin-bottom: 20px; position: relative; width: 100%; box-sizing: border-box; }}
+        .table-wrapper {{ overflow-x: auto; background: white; border-radius: 10px; margin-bottom: 30px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); -webkit-overflow-scrolling: touch; }}
+        table {{ width: 100%; border-collapse: collapse; font-size: 13px; min-width: 600px; }}
+        th {{ background: #f8fafc; padding: 12px 10px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600; border-top: 1px solid #e2e8f0; white-space: nowrap; }}
+        td {{ padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; white-space: nowrap; }}
         tbody tr:nth-child(even) {{ background-color: #f8fafc; }}
-        .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; min-width: 45px; text-align: center;}}
+        .badge {{ padding: 4px 6px; border-radius: 4px; color: white; font-size: 11px; font-weight: 600; display: inline-block; min-width: 45px; text-align: center; white-space: nowrap; }}
         .buy {{ background: #EF9A9A; }} .sell {{ background: #90CAF9; }} .div {{ background: #A5D6A7; }} .withdraw {{ background: #FFCC80; }} .reinvest {{ background: #B39DDB; }} .eval {{ background: #64748b; }} .eval-month {{ background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; }}
-        .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; }}
-        .section-icon {{ border-left: 3px solid #3b82f6; padding-left: 8px; }}
+        
+        .header-controls {{ display: flex; justify-content: space-between; align-items: center; margin: 25px 0 10px 0; flex-wrap: wrap; gap: 10px; }}
+        .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; max-width: 100%; }}
+        .section-icon {{ border-left: 3px solid #3b82f6; padding-left: 8px; font-weight:700; font-size:16px; white-space: nowrap; }}
+        
+        /* 📱 반응형 (모바일) CSS 추가 */
+        @media (max-width: 768px) {{
+            body {{ padding: 5px; }}
+            .chart-container {{ height: 280px; padding: 10px; }}
+            .card-grid {{ grid-template-columns: 1fr; gap: 10px; }}
+            .card {{ padding: 12px; }}
+            #ticker-select {{ width: 100%; }}
+            th, td {{ font-size: 12px; padding: 8px 6px; }}
+        }}
     </style>
     </head><body>
     <div class="chart-container"><canvas id="assetChart"></canvas></div>
     <div class="card-grid" id="stat-cards"></div>
-    <div style="margin-bottom: 15px; display:flex; justify-content:flex-end;"><select id="ticker-select" class="sort-select" style="min-width: 250px;" onchange="onDropdownChange()"></select></div>
-    <div style="display:flex; justify-content:space-between; align-items:center; margin: 25px 0 10px 0;"><span class="section-icon" style="font-weight:700; font-size:16px;">🗓️ 월별 요약</span><select id="sort-select-monthly" class="sort-select" onchange="renderTablesOnly()"><option value="asc">과거순</option><option value="desc">최신순</option></select></div>
-    <div class="table-wrapper"><table><thead><tr><th>기간</th><th>주당배당</th><th>배당률</th><th>배당합계</th><th>기말자산</th><th>증감</th></tr></thead><tbody id="monthly-tbody"></tbody></table></div>
-    <div style="display:flex; justify-content:space-between; align-items:center; margin: 25px 0 10px 0;"><span class="section-icon" style="font-weight:700; font-size:16px;">🔍 상세 거래 내역</span><select id="sort-select-history" class="sort-select" onchange="renderTablesOnly()"><option value="asc">과거순</option><option value="desc">최신순</option></select></div>
-    <div class="table-wrapper"><table><thead><tr><th>날짜</th><th>구분</th><th>종목</th><th>단가/분배금</th><th>수량</th><th>금액</th><th>현금잔고</th><th>총자산</th></tr></thead><tbody id="tbody"></tbody></table></div>
+    
+    <div style="margin-bottom: 15px; display:flex; justify-content:flex-end;">
+        <select id="ticker-select" class="sort-select" onchange="onDropdownChange()"></select>
+    </div>
+    
+    <div class="header-controls">
+        <span class="section-icon">🗓️ 월별 요약</span>
+        <select id="sort-select-monthly" class="sort-select" onchange="renderTablesOnly()">
+            <option value="asc">과거순</option><option value="desc">최신순</option>
+        </select>
+    </div>
+    <div class="table-wrapper">
+        <table>
+            <thead><tr><th>기간</th><th>주당배당</th><th>배당률</th><th>배당합계</th><th>기말자산</th><th>증감</th></tr></thead>
+            <tbody id="monthly-tbody"></tbody>
+        </table>
+    </div>
+    
+    <div class="header-controls">
+        <span class="section-icon">🔍 상세 거래 내역</span>
+        <select id="sort-select-history" class="sort-select" onchange="renderTablesOnly()">
+            <option value="asc">과거순</option><option value="desc">최신순</option>
+        </select>
+    </div>
+    <div class="table-wrapper">
+        <table>
+            <thead><tr><th>날짜</th><th>구분</th><th>종목</th><th>단가/분배금</th><th>수량</th><th>금액</th><th>현금잔고</th><th>총자산</th></tr></thead>
+            <tbody id="tbody"></tbody>
+        </table>
+    </div>
+    
     <script>
         const data = {json.dumps(res['all_data'])}, keys = {json.dumps(res['compare_keys'])}, labels = {json.dumps(res['labels'])}, colors = {json.dumps(colors)}, datasets = {json.dumps(datasets)};
         let chartInstance = null, currentIndex = 0;
