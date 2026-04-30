@@ -219,7 +219,7 @@ if st.session_state.show_settings:
                 ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
                 key="saved_strategy"
             )
-            use_5pct_input = st.checkbox("🎯 5% 수익 도달 시 전량 매도 후 재매수 (단, 배당락일 ±5일은 회피)", key="saved_5pct")
+            use_5pct_input = st.checkbox("🎯 5% 수익 도달 시 매도 후 다음 날 재매수 (단, 배당락일 ±5일 방어)", key="saved_5pct")
             
         with col4:
             has_wm = '+' in etf_input
@@ -356,7 +356,7 @@ if st.session_state.show_settings:
                 total_shares, total_withdrawn, total_dividend = 0, 0.0, 0.0 
                 history, summary, asset_by_date, monthly_data = [], [], {}, {}
                 prev_asset = INITIAL_CASH
-                reinvest_flag, windmill_swap_pending = False, False
+                reinvest_flag, windmill_swap_pending, pending_profit_reinvest = False, False, False
                 current_idx = 0
                 current_ticker = t_tickers[current_idx]
                 pending_dividends, scheduled_buys = {}, {}
@@ -463,7 +463,8 @@ if st.session_state.show_settings:
                                     gubun_text = f'매수({N_splits}분할)' if N_splits > 1 else '일괄매수'
                                     history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))})
                     else:
-                        if (date in invest_dates_set or reinvest_flag) and not pd.isna(price) and available_cash >= price:
+                        # 일반 매수, 배당재투자, 또는 전일 5% 수익 실현으로 인한 익일 재매수 처리
+                        if (date in invest_dates_set or reinvest_flag or pending_profit_reinvest) and not pd.isna(price) and available_cash >= price:
                             shares_to_buy = int(available_cash // price)
                             if shares_to_buy > 0:
                                 cost = shares_to_buy * price
@@ -473,13 +474,18 @@ if st.session_state.show_settings:
                                 
                                 available_cash -= cost
                                 total_shares += shares_to_buy
+                                
                                 gubun_text = '매수'
-                                if reinvest_flag and date not in invest_dates_set: gubun_text = '배당재투자'
+                                if pending_profit_reinvest: gubun_text = '🔄수익확정 재매수'
+                                elif reinvest_flag and date not in invest_dates_set: gubun_text = '배당재투자'
                                 elif reinvest_flag and date in invest_dates_set: gubun_text = '매수+재투자'
+                                
                                 history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash), '총자산': float(reserve_cash + available_cash + (total_shares * price))})
+                        
                         reinvest_flag = False
+                        pending_profit_reinvest = False # 플래그 초기화
 
-                    # 🎯 5% 도달 시 수익 실현 및 즉시 재매수 로직 (거치식 전용 + 배당락일 방어 추가)
+                    # 🎯 5% 도달 시 매도 로직 (거치식 전용 + 배당락일 방어 추가 + 시차 적용)
                     if not is_windmill_split and strat == "거치식 (일괄 매수)" and use_5pct:
                         if total_shares > 0 and avg_buy_price > 0:
                             current_return = (price - avg_buy_price) / avg_buy_price
@@ -487,25 +493,18 @@ if st.session_state.show_settings:
                                 # 배당락일 5일 전후 방어 로직 (배당금 수령 보장)
                                 b_div_series = processed_data[current_ticker][1]
                                 div_dates = b_div_series[b_div_series > 0].index
-                                # 현재 날짜(date)와 가장 가까운 배당락일 간의 일수 차이 계산
                                 min_diff = min([abs((d - date).days) for d in div_dates]) if len(div_dates) > 0 else 999
                                 
-                                # 차이가 5일 이상일 때만 수익 실현 및 재매수 실행
+                                # 배당락일과 5일 이상 차이가 날 때만 매도 진행
                                 if min_diff >= 5:
-                                    # 1. 전량 매도 (수익 실현)
                                     sell_amount = total_shares * price
                                     history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '🎯수익실현(5%)', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': float(sell_amount), '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
                                     available_cash += sell_amount
                                     total_shares = 0
+                                    avg_buy_price = 0.0 
                                     
-                                    # 2. 당일 즉시 전액 재매수 (복리 재투자)
-                                    shares_to_buy = int(available_cash // price)
-                                    if shares_to_buy > 0:
-                                        cost = shares_to_buy * price
-                                        available_cash -= cost
-                                        total_shares += shares_to_buy
-                                        avg_buy_price = price # 평단가를 현재 매수가로 리셋
-                                        history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '🔄수익확정 재매수', '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))})
+                                    # 당일 재매수하지 않고, 다음 루프(익일 거래일)에서 재매수하도록 플래그만 설정
+                                    pending_profit_reinvest = True
                     
                     cur_asset = float(reserve_cash + available_cash + staged_cash + (total_shares * price))
                     monthly_data[month_str]['end_asset'] = cur_asset
