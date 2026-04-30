@@ -22,6 +22,8 @@ if 'sim_result_data' not in st.session_state:
     st.session_state.sim_result_data = None
 if 'do_run' not in st.session_state:
     st.session_state.do_run = False
+if 'focus_search' not in st.session_state:
+    st.session_state.focus_search = False
 
 # --- 입력값 유지를 위한 세션 상태 초기화 (기본값 고정) ---
 if 'last_inputs' not in st.session_state:
@@ -115,6 +117,7 @@ def append_to_etf_input(code):
         st.toast("⚠️ 최대 4종목까지만 추가할 수 있습니다.", icon="⚠️")
     else:
         st.session_state.saved_etf = current_str + f", {code}" if current_str.strip() else code
+    st.session_state.focus_search = True
 
 # ==========================================
 # UI 영역
@@ -127,6 +130,7 @@ if st.session_state.run_clicked and not st.session_state.show_settings:
 if st.session_state.show_settings:
     st.title("월 배당 ETF 백테스트")
 
+    # 💡 [설명서 내용 업데이트]
     with st.expander("📚 시뮬레이터 상세 사용 설명서 (클릭하여 열기)", expanded=False):
         st.markdown("""
         ### 🚀 월배당 ETF & 배당풍차 백테스트 가이드
@@ -136,18 +140,24 @@ if st.session_state.show_settings:
         #### 1️⃣ 투자 환경 설정
         * **초기 총 투자금:** 시뮬레이션 시작 시점의 원금을 입력합니다.
         * **백테스트 기간:** `2025.1~2026.4` 또는 `2026` 형식으로 설정 가능합니다.
-        * **배당금 처리:** * **재투자:** 배당금 입금 시 즉시 해당 종목을 추가 매수 (복리 효과)
-            * **인출(생활비):** 배당금을 현금으로 수령하는 시나리오
+        * **배당금 처리:** 
+          * **재투자:** 배당금 입금 시 즉시 해당 종목을 추가 매수하여 복리 효과를 누립니다.
+          * **인출(생활비):** 배당금을 현금으로 수령하여 자산에 재투자하지 않는 시나리오입니다.
 
         #### 2️⃣ 종목 및 매수 방식 선택
-        * **종목 코드:** 최대 4개 비교 가능 (예: `498400`, `QQQ`, `498400 + 472150`)
-        * **단일 종목 방식:** 거치식, 일/주/월 적립식 중 선택
-        * **배당풍차 방식:** 일괄 매수 또는 **4분할/6분할 매수**를 통해 효율성 비교
+        * **종목 코드:** 최대 4개 비교 가능합니다. (예: `498400`, `QQQ`, 풍차 전략은 `498400 + 472150`처럼 `+` 사용)
+        * **단일 종목 방식:** 거치식(일괄), 일/주/월 적립식 중 선택하여 차트에 동시 비교가 가능합니다.
+        * **배당풍차 방식:** 일괄 매수 또는 **4분할/6분할 매수**를 통해 현금을 쪼개서 투자하는 전략을 테스트합니다.
 
-        #### 3️⃣ 결과 분석 팁
-        * **양방향 연동:** 차트의 선이나 하단 요약 카드를 클릭하면 서로 연동되어 강조 표시됩니다.
+        #### 3️⃣ 🎯 수익 회전(Swing) 전략 테스트
+        * **목표 수익 도달 시 익일 재매수:** `기본(적용 안함)`, `3% 수익`, `5% 수익` 등을 복수 선택하여 **일반 장기 투자와 단기 스윙 전략의 성과를 차트에서 한눈에 비교**할 수 있습니다.
+        * **배당락일 방어:** 수익 조건에 도달하더라도, **배당락일 전후 5일 이내라면 매도하지 않고 배당을 안전하게 수령**한 뒤 매매를 진행합니다.
+        * **분할 매수 초기화:** 분할 매수 진행 중 목표 수익에 도달하여 전량 매도할 경우, **남은 분할 스케줄을 초기화하고 커진 금액을 기준으로 새롭게 분할을 세팅**합니다.
+
+        #### 4️⃣ 결과 분석 팁
+        * **결과 카드 삭제:** 결과 화면의 너무 많은 차트 선이 복잡하다면, 상단 카드 우측의 `X` 버튼을 눌러 **원하지 않는 전략을 화면에서 즉시 삭제**할 수 있습니다.
+        * **매매 차익 분리:** 배당금으로 번 돈과, 주식을 사고팔아서 번 **'누적 매매차익'**을 분리해서 보여줍니다.
         * **배당금 입금 로직:** 배당락일 기준 권리 확정 후, **실제 현금 입금은 4일 뒤**에 이루어집니다.
-        * **매매 타이밍:** 배당풍차 전략 시, **배당락일 다음 거래일**에 전량 매도 및 교체 매매를 진행합니다.
         """)
 
     st.info("""
@@ -199,6 +209,23 @@ if st.session_state.show_settings:
                 else:
                     st.warning("검색 결과가 없습니다.")
 
+        if st.session_state.focus_search:
+            components.html(
+                """
+                <script>
+                const doc = window.parent.document;
+                setTimeout(() => {
+                    const inputs = Array.from(doc.querySelectorAll('input'));
+                    const searchInput = inputs.find(input => input.getAttribute('aria-label') && input.getAttribute('aria-label').includes('종목 검색어 입력'));
+                    if (searchInput) {
+                        searchInput.focus();
+                    }
+                }, 300);
+                </script>
+                """, height=0, width=0
+            )
+            st.session_state.focus_search = False 
+
     with st.container(border=True):
         st.subheader("⚙️ 테스트 환경")
         
@@ -238,7 +265,6 @@ if st.session_state.show_settings:
             
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
         
-        # 💡 [핵심 추가] 종목 검색 Expander 클릭 시 검색창 자동 포커스 JS
         components.html(
             """
             <script>
@@ -246,7 +272,6 @@ if st.session_state.show_settings:
             if (!doc.window_enter_bound) {
                 doc.window_enter_bound = true;
                 
-                // 1. 엔터키로 실행 버튼 누르기
                 doc.addEventListener('keydown', function(e) {
                     if (e.key === 'Enter') {
                         const active = doc.activeElement;
@@ -260,12 +285,10 @@ if st.session_state.show_settings:
                     }
                 });
                 
-                // 2. 종목 검색 Expander 클릭 시 검색 입력창 자동 포커스
                 doc.addEventListener('click', function(e) {
                     let target = e.target;
                     while (target && target !== doc) {
                         if (target.tagName === 'SUMMARY' && target.innerText.includes('종목 코드를 모르시나요?')) {
-                            // Expander가 열리는 애니메이션(CSS) 시간을 고려해 0.2초 딜레이
                             setTimeout(() => {
                                 const inputs = Array.from(doc.querySelectorAll('input'));
                                 const searchInput = inputs.find(input => input.getAttribute('aria-label') && input.getAttribute('aria-label').includes('종목 검색어 입력'));
@@ -440,7 +463,6 @@ if st.session_state.show_settings:
 
                     if windmill_swap_pending:
                         sell_amount = total_shares * price
-                        
                         realized_profit = sell_amount - (total_shares * avg_buy_price)
                         total_realized_profit += realized_profit
                         
