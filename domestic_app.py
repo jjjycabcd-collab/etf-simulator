@@ -424,7 +424,6 @@ if st.session_state.show_settings:
                         
                         if is_windmill_split:
                             staged_cash += sell_amount
-                            # 💡 종목이 바뀌었으므로 이전 종목의 잔여 스케줄 무조건 초기화
                             keys_to_remove = [k for k in scheduled_buys.keys() if k > date]
                             for k in keys_to_remove: del scheduled_buys[k]
                             schedule_buys(staged_cash, d_idx, current_ticker, N_splits)
@@ -514,24 +513,21 @@ if st.session_state.show_settings:
                                 history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '🔄수익확정 재매수', '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))})
                         pending_profit_reinvest = False
 
-                    # 🎯 선택한 목표 수익(pt_val) 도달 시 매도 로직 (단일/배당풍차/적립식 모두 통합 적용)
+                    # 🎯 선택한 목표 수익(pt_val) 도달 시 매도 로직
                     if pt_val > 0.0:
                         if total_shares > 0 and avg_buy_price > 0:
                             current_return = (price - avg_buy_price) / avg_buy_price
                             if current_return >= pt_val:
-                                # 배당락일 5일 전후 방어 로직 (배당금 수령 보장)
                                 b_div_series = processed_data[current_ticker][1]
                                 div_dates = b_div_series[b_div_series > 0].index
                                 min_diff = min([abs((d - date).days) for d in div_dates]) if len(div_dates) > 0 else 999
                                 
-                                # 배당락일과 5일 이상 차이가 날 때만 안전하게 수익 실현
                                 if min_diff >= 5:
                                     sell_amount = total_shares * price
                                     pt_percent_str = f"{int(pt_val*100)}%"
                                     history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': f'🎯수익실현({pt_percent_str})', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': float(sell_amount), '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
                                     
                                     if is_windmill_split:
-                                        # 💡 핵심: 분할 매수 중 수익 실현 시, 기존 예약 올스톱 & 금액 영끌 후 재분배
                                         staged_cash += (available_cash + sell_amount)
                                         available_cash = 0.0
                                         total_shares = 0
@@ -541,11 +537,9 @@ if st.session_state.show_settings:
                                         for k in keys_to_remove:
                                             del scheduled_buys[k]
                                             
-                                        # 익일부터 남은 기간 동안 4/6분할 등 재배치
                                         if d_idx + 1 < len(all_trading_dates):
                                             schedule_buys(staged_cash, d_idx + 1, current_ticker, N_splits)
                                     else:
-                                        # 거치식/적립식: 매도 후 익일에 일괄 매수하도록 플래그 세팅
                                         available_cash += sell_amount 
                                         total_shares = 0
                                         avg_buy_price = 0.0 
@@ -587,15 +581,18 @@ if st.session_state.run_clicked and not st.session_state.show_settings and st.se
         d = res['all_data'][k]
         datasets.append({'label': d['name'], 'data': d['chart_values'], 'borderColor': colors[idx % len(colors)], 'backgroundColor': colors[idx % len(colors)], 'tension': 0.3, 'fill': False, 'borderWidth': 3})
 
+    # 💡 [핵심 추가] 자바스크립트 내에 removeCard 로직 및 X 버튼 UI 추가
     html_code = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body {{ font-family: system-ui, sans-serif; background: #f8fafc; padding: 10px; color: #334155; margin: 0; }}
         .card-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 20px; }}
-        .card {{ background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-top: 4px solid #94a3b8; transition: all 0.2s ease; cursor: pointer; }}
+        .card {{ background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-top: 4px solid #94a3b8; transition: all 0.2s ease; cursor: pointer; position: relative; }}
         .card:hover {{ transform: translateY(-2px); box-shadow: 0 5px 10px rgba(0,0,0,0.1); }}
-        .card h3 {{ font-size: 14px; margin: 0 0 10px 0; color:#1e293b; font-weight:700; }}
+        .card h3 {{ font-size: 14px; margin: 0 0 10px 0; color:#1e293b; font-weight:700; padding-right: 20px; line-height: 1.3; }}
+        .close-btn {{ position: absolute; top: 10px; right: 10px; font-size: 20px; font-weight: bold; color: #cbd5e1; cursor: pointer; transition: color 0.2s; line-height: 1; }}
+        .close-btn:hover {{ color: #ef4444; }}
         .card-row {{ display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px; color:#475569; }}
         .chart-container {{ background: white; padding: 15px; border-radius: 12px; height: 350px; margin-bottom: 20px; position: relative; width: 100%; box-sizing: border-box; }}
         .table-wrapper {{ overflow-x: auto; background: white; border-radius: 10px; margin-bottom: 30px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); -webkit-overflow-scrolling: touch; }}
@@ -654,18 +651,79 @@ if st.session_state.run_clicked and not st.session_state.show_settings and st.se
     </div>
     
     <script>
-        const data = {json.dumps(res['all_data'])}, keys = {json.dumps(res['compare_keys'])}, labels = {json.dumps(res['labels'])}, colors = {json.dumps(colors)}, datasets = {json.dumps(datasets)};
+        const data = {json.dumps(res['all_data'])}, keys = {json.dumps(res['compare_keys'])}, labels = {json.dumps(res['labels'])}, colors = {json.dumps(colors)}, origDatasets = {json.dumps(datasets)};
         let chartInstance = null, currentIndex = 0;
+        let activeKeys = [...keys];
+        let activeDatasets = [...origDatasets];
+
+        function renderCards() {{
+            if(activeKeys.length === 0) {{
+                document.getElementById('stat-cards').innerHTML = '<div style="grid-column: 1 / -1; padding: 20px; text-align: center; color: #94a3b8; font-weight: 600;">모든 결과가 삭제되었습니다. 다시 시뮬레이션 해주세요.</div>';
+                return;
+            }}
+            document.getElementById('stat-cards').innerHTML = activeKeys.map((key, i) => {{
+                const item = data[key]; const isWithdrawal = item.div_action === '인출(생활비)';
+                const origIndex = keys.indexOf(key); // 삭제되더라도 고유 색상 유지
+                return `<div class="card" id="card-${{i}}" onclick="selectItem(${{i}})" style="border-top-color: ${{colors[origIndex % colors.length]}};">
+                    <span class="close-btn" onclick="removeCard(${{i}}, event)">&times;</span>
+                    <h3>${{item.name}}</h3>
+                    <div class="card-row"><span>초기 투자금</span><strong>${{fmt(item.initial_cash)}}</strong></div>
+                    <div class="card-row"><span>총 배당금</span><span style="color:#d97706; font-weight:600;">+${{fmt(item.total_dividend)}}</span></div>
+                    <div class="card-row"><span>${{isWithdrawal?'평가 자산':'최종 자산'}}</span><strong>${{fmt(item.final_asset)}}</strong></div>
+                    <div class="card-row"><span>총 수익금</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${{fmt(item.total_profit)}} (${{item.profit_rate.toFixed(2)}}%)</span></div>
+                </div>`;
+            }}).join('');
+        }}
+
+        function renderDropdown() {{
+            const sel = document.getElementById('ticker-select');
+            sel.innerHTML = '';
+            if(activeKeys.length === 0) return;
+            activeKeys.forEach(k => sel.add(new Option(data[k].name, k)));
+            sel.value = activeKeys[currentIndex];
+        }}
+
+        function removeCard(index, event) {{
+            event.stopPropagation(); // 카드 클릭(선택) 이벤트 방지
+            
+            // 데이터 배열에서 해당 항목 제거
+            activeKeys.splice(index, 1);
+            activeDatasets.splice(index, 1);
+            
+            // 모두 삭제된 경우 UI 초기화
+            if (activeKeys.length === 0) {{
+                chartInstance.data.datasets = [];
+                chartInstance.update();
+                document.getElementById('monthly-tbody').innerHTML = '';
+                document.getElementById('tbody').innerHTML = '';
+                renderCards();
+                renderDropdown();
+                return;
+            }}
+            
+            // 선택 중이던 카드가 삭제된 경우 인덱스 조정
+            if (currentIndex === index) {{
+                currentIndex = Math.min(currentIndex, activeKeys.length - 1);
+            }} else if (currentIndex > index) {{
+                currentIndex--;
+            }}
+            
+            // 차트 갱신
+            chartInstance.data.datasets = activeDatasets;
+            chartInstance.update();
+            
+            // UI 재렌더링
+            renderCards();
+            renderDropdown();
+            selectItem(currentIndex);
+        }}
 
         function init() {{
-            const sel = document.getElementById('ticker-select');
-            keys.forEach(k => sel.add(new Option(data[k].name, k)));
-            document.getElementById('stat-cards').innerHTML = keys.map((key, i) => {{
-                const item = data[key]; const isWithdrawal = item.div_action === '인출(생활비)';
-                return `<div class="card" id="card-${{i}}" onclick="selectItem(${{i}})" style="border-top-color: ${{colors[i % colors.length]}};"><h3>${{item.name}}</h3><div class="card-row"><span>초기 투자금</span><strong>${{fmt(item.initial_cash)}}</strong></div><div class="card-row"><span>총 배당금</span><span style="color:#d97706; font-weight:600;">+${{fmt(item.total_dividend)}}</span></div><div class="card-row"><span>${{isWithdrawal?'평가 자산':'최종 자산'}}</span><strong>${{fmt(item.final_asset)}}</strong></div><div class="card-row"><span>총 수익금</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${{fmt(item.total_profit)}} (${{item.profit_rate.toFixed(2)}}%)</span></div></div>`;
-            }}).join('');
+            renderCards();
+            renderDropdown();
+            
             chartInstance = new Chart(document.getElementById('assetChart'), {{
-                type: 'line', data: {{ labels: labels, datasets: datasets }},
+                type: 'line', data: {{ labels: labels, datasets: activeDatasets }},
                 options: {{
                     responsive: true, maintainAspectRatio: false, interaction: {{ mode: 'nearest', axis: 'x', intersect: false }},
                     plugins: {{ legend: {{ onClick: (e, item) => selectItem(item.datasetIndex) }} }},
@@ -673,23 +731,34 @@ if st.session_state.run_clicked and not st.session_state.show_settings and st.se
                     scales: {{ y: {{ ticks: {{ callback: v => (v/10000) + '만' }} }} }}
                 }}
             }});
-            selectItem(0); 
+            
+            if(activeKeys.length > 0) selectItem(0); 
         }}
 
         function selectItem(index) {{
-            currentIndex = index; document.getElementById('ticker-select').value = keys[index];
-            keys.forEach((k, i) => {{
+            if(activeKeys.length === 0) return;
+            currentIndex = index; document.getElementById('ticker-select').value = activeKeys[index];
+            activeKeys.forEach((k, i) => {{
                 const card = document.getElementById(`card-${{i}}`);
-                if (i === index) {{ card.style.opacity = '1'; card.style.transform = 'translateY(-4px)'; card.style.boxShadow = `0 0 0 2px ${{colors[i % colors.length]}}, 0 10px 15px -3px rgba(0,0,0,0.15)`; }}
-                else {{ card.style.opacity = '0.35'; card.style.transform = 'translateY(0)'; card.style.boxShadow = '0 2px 5px rgba(0,0,0,0.05)'; }}
+                if(card) {{
+                    const origIndex = keys.indexOf(k);
+                    if (i === index) {{ card.style.opacity = '1'; card.style.transform = 'translateY(-4px)'; card.style.boxShadow = `0 0 0 2px ${{colors[origIndex % colors.length]}}, 0 10px 15px -3px rgba(0,0,0,0.15)`; }}
+                    else {{ card.style.opacity = '0.35'; card.style.transform = 'translateY(0)'; card.style.boxShadow = '0 2px 5px rgba(0,0,0,0.05)'; }}
+                }}
             }});
-            chartInstance.data.datasets.forEach((ds, i) => {{ ds.borderWidth = (i === index) ? 5 : 1.5; ds.borderColor = colors[i % colors.length] + (i === index ? '' : '30'); }});
+            chartInstance.data.datasets.forEach((ds, i) => {{ 
+                const origIndex = keys.indexOf(activeKeys[i]);
+                ds.borderWidth = (i === index) ? 5 : 1.5; 
+                ds.borderColor = colors[origIndex % colors.length] + (i === index ? '' : '30'); 
+            }});
             chartInstance.update(); renderTablesOnly();
         }}
 
-        function onDropdownChange() {{ selectItem(keys.indexOf(document.getElementById('ticker-select').value)); }}
+        function onDropdownChange() {{ selectItem(activeKeys.indexOf(document.getElementById('ticker-select').value)); }}
+        
         function renderTablesOnly() {{
-            const d = data[keys[currentIndex]];
+            if(activeKeys.length === 0) return;
+            const d = data[activeKeys[currentIndex]];
             let monthlyData = d.monthly_summary.slice(); if (document.getElementById('sort-select-monthly').value === 'desc') monthlyData.reverse(); 
             document.getElementById('monthly-tbody').innerHTML = monthlyData.map(m => `<tr><td>${{m.기간}}</td><td>${{Math.floor(m.주당배당).toLocaleString()}}</td><td style="color:#d97706; font-weight:600;">${{m.배당률.toFixed(2)}}%</td><td>${{m.배당합계 > 0 ? fmtMan(m.배당합계) : '-'}}</td><td style="font-weight:600;">${{fmtMan(m.기말자산)}}</td><td style="color:${{m.증감 > 0 ? '#dc2626' : (m.증감 < 0 ? '#2563eb' : '#334155')}}; font-weight:600;">${{m.증감 > 0 ? '+' : ''}}${{fmtMan(m.증감)}}</td></tr>`).join('');
             let historyData = d.history.slice(); if (document.getElementById('sort-select-history').value === 'desc') historyData.reverse(); 
