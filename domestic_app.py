@@ -31,7 +31,8 @@ if 'last_inputs' not in st.session_state:
         'div': "재투자",
         'etf': "498400, 472150, 498400 + 472150",
         'strat': ["거치식 (일괄 매수)"],
-        'strat_wm': ["일괄 매수"]
+        'strat_wm': ["일괄 매수"],
+        'use_5pct': False
     }
 
 if 'saved_cash' not in st.session_state: st.session_state.saved_cash = st.session_state.last_inputs['cash']
@@ -40,6 +41,7 @@ if 'saved_div_action' not in st.session_state: st.session_state.saved_div_action
 if 'saved_etf' not in st.session_state: st.session_state.saved_etf = st.session_state.last_inputs['etf']
 if 'saved_strategy' not in st.session_state: st.session_state.saved_strategy = st.session_state.last_inputs['strat']
 if 'saved_strategy_wm' not in st.session_state: st.session_state.saved_strategy_wm = st.session_state.last_inputs['strat_wm']
+if 'saved_5pct' not in st.session_state: st.session_state.saved_5pct = st.session_state.last_inputs['use_5pct']
 
 # ==========================================
 # 종목 데이터 마스터 적재 (캐싱)
@@ -217,6 +219,8 @@ if st.session_state.show_settings:
                 ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
                 key="saved_strategy"
             )
+            use_5pct_input = st.checkbox("🎯 5% 수익 도달 시 전량 매도 후 재매수 (단, 배당락일 ±5일은 회피)", key="saved_5pct")
+            
         with col4:
             has_wm = '+' in etf_input
             strategy_options_wm = st.multiselect(
@@ -256,7 +260,8 @@ if st.session_state.show_settings:
         
         st.session_state.last_inputs = {
             'cash': cash_input, 'period': period_input, 'div': div_action_input,
-            'etf': etf_input, 'strat': strategy_options, 'strat_wm': strategy_options_wm
+            'etf': etf_input, 'strat': strategy_options, 'strat_wm': strategy_options_wm,
+            'use_5pct': use_5pct_input
         }
 
         with st.spinner('데이터 통합 분석 중...'):
@@ -264,6 +269,7 @@ if st.session_state.show_settings:
             clean_cash = re.sub(r'[^0-9.]', '', safe_cash)
             INITIAL_CASH = float(clean_cash) if clean_cash else 5000000.0
             
+            use_5pct = use_5pct_input
             safe_period = period_input if period_input and period_input.strip() else "2025.1~2026.4"
             safe_etf = etf_input if etf_input and etf_input.strip() else "498400, 472150, 498400 + 472150"
             
@@ -354,6 +360,8 @@ if st.session_state.show_settings:
                 current_idx = 0
                 current_ticker = t_tickers[current_idx]
                 pending_dividends, scheduled_buys = {}, {}
+                
+                avg_buy_price = 0.0 # 평단가 추적용 변수
 
                 def schedule_buys(amount, from_idx, target_tk, n_split):
                     if amount <= 0: return
@@ -459,6 +467,10 @@ if st.session_state.show_settings:
                             shares_to_buy = int(available_cash // price)
                             if shares_to_buy > 0:
                                 cost = shares_to_buy * price
+                                # 매수 시 평단가 업데이트
+                                if total_shares == 0: avg_buy_price = price
+                                else: avg_buy_price = ((total_shares * avg_buy_price) + cost) / (total_shares + shares_to_buy)
+                                
                                 available_cash -= cost
                                 total_shares += shares_to_buy
                                 gubun_text = '매수'
@@ -466,6 +478,34 @@ if st.session_state.show_settings:
                                 elif reinvest_flag and date in invest_dates_set: gubun_text = '매수+재투자'
                                 history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash), '총자산': float(reserve_cash + available_cash + (total_shares * price))})
                         reinvest_flag = False
+
+                    # 🎯 5% 도달 시 수익 실현 및 즉시 재매수 로직 (거치식 전용 + 배당락일 방어 추가)
+                    if not is_windmill_split and strat == "거치식 (일괄 매수)" and use_5pct:
+                        if total_shares > 0 and avg_buy_price > 0:
+                            current_return = (price - avg_buy_price) / avg_buy_price
+                            if current_return >= 0.05:
+                                # 배당락일 5일 전후 방어 로직 (배당금 수령 보장)
+                                b_div_series = processed_data[current_ticker][1]
+                                div_dates = b_div_series[b_div_series > 0].index
+                                # 현재 날짜(date)와 가장 가까운 배당락일 간의 일수 차이 계산
+                                min_diff = min([abs((d - date).days) for d in div_dates]) if len(div_dates) > 0 else 999
+                                
+                                # 차이가 5일 이상일 때만 수익 실현 및 재매수 실행
+                                if min_diff >= 5:
+                                    # 1. 전량 매도 (수익 실현)
+                                    sell_amount = total_shares * price
+                                    history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '🎯수익실현(5%)', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': float(sell_amount), '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
+                                    available_cash += sell_amount
+                                    total_shares = 0
+                                    
+                                    # 2. 당일 즉시 전액 재매수 (복리 재투자)
+                                    shares_to_buy = int(available_cash // price)
+                                    if shares_to_buy > 0:
+                                        cost = shares_to_buy * price
+                                        available_cash -= cost
+                                        total_shares += shares_to_buy
+                                        avg_buy_price = price # 평단가를 현재 매수가로 리셋
+                                        history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '🔄수익확정 재매수', '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))})
                     
                     cur_asset = float(reserve_cash + available_cash + staged_cash + (total_shares * price))
                     monthly_data[month_str]['end_asset'] = cur_asset
@@ -495,11 +535,9 @@ if st.session_state.show_settings:
 # ==========================================
 # 결과 출력 영역 (인터랙션 UI)
 # ==========================================
-# 🛑 핵심 수정 부분: 'not st.session_state.show_settings' 조건을 추가하여 설정 화면일 때 HTML을 그리지 않음
 if st.session_state.run_clicked and not st.session_state.show_settings and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
     datasets = []
-    # 💡 톤다운된 진한 색상 팔레트
     colors = ['#C62828', '#1565C0', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#AD1457', '#9E9D24', '#4527A0', '#00695C']
     for idx, k in enumerate(res['compare_keys']):
         d = res['all_data'][k]
@@ -528,7 +566,6 @@ if st.session_state.run_clicked and not st.session_state.show_settings and st.se
         .sort-select {{ padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: white; font-weight: 600; color: #475569; outline: none; cursor: pointer; max-width: 100%; }}
         .section-icon {{ border-left: 3px solid #3b82f6; padding-left: 8px; font-weight:700; font-size:16px; white-space: nowrap; }}
         
-        /* 📱 반응형 (모바일) CSS 추가 */
         @media (max-width: 768px) {{
             body {{ padding: 5px; }}
             .chart-container {{ height: 280px; padding: 10px; }}
@@ -617,7 +654,16 @@ if st.session_state.run_clicked and not st.session_state.show_settings and st.se
 
         function fmt(v) {{ return Math.floor(v).toLocaleString() + "원"; }}
         function fmtMan(v) {{ if (v === 0) return "0"; const isNeg = v < 0; let absV = Math.abs(v); if (absV < 10000) return (isNeg ? "-" : "") + Math.floor(absV).toLocaleString() + "원"; return (isNeg ? "-" : "") + Math.floor(absV / 10000).toLocaleString() + "만"; }}
-        function getBadgeClass(type) {{ if(type.includes('풍차매도')) return 'sell'; if(type.includes('매수')) return 'reinvest'; if(type.includes('월말평가')) return 'eval-month'; if(type.includes('배당금(인출)')) return 'withdraw'; if(type.includes('배당금(입금)')) return 'div'; if(type.includes('최종평가')) return 'eval'; return 'buy'; }}
+        
+        function getBadgeClass(type) {{ 
+            if(type.includes('풍차매도') || type.includes('수익실현')) return 'sell'; 
+            if(type.includes('배당재투자') || type.includes('재매수')) return 'reinvest'; 
+            if(type.includes('월말평가')) return 'eval-month'; 
+            if(type.includes('배당금(인출)')) return 'withdraw'; 
+            if(type.includes('배당금(입금)')) return 'div'; 
+            if(type.includes('최종평가')) return 'eval'; 
+            return 'buy'; 
+        }}
         init();
     </script></body></html>
     """
