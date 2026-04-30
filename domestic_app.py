@@ -369,6 +369,8 @@ if st.session_state.show_settings:
 
                 reserve_cash, available_cash, staged_cash = (0.0, 0.0, INITIAL_CASH) if is_windmill_split else (INITIAL_CASH, 0.0, 0.0)
                 total_shares, total_withdrawn, total_dividend = 0, 0.0, 0.0 
+                total_realized_profit = 0.0  # 💡 실현된 매매 차익을 누적하는 변수 추가
+                
                 history, summary, asset_by_date, monthly_data = [], [], {}, {}
                 prev_asset = INITIAL_CASH
                 reinvest_flag, windmill_swap_pending, pending_profit_reinvest = False, False, False
@@ -415,6 +417,11 @@ if st.session_state.show_settings:
                     # [풍차 핵심] 매도 시점을 배당락일 다음 거래일로 지연
                     if windmill_swap_pending:
                         sell_amount = total_shares * price
+                        
+                        # 💡 실현 손익 누적 (풍차 스왑 매도 시)
+                        realized_profit = sell_amount - (total_shares * avg_buy_price)
+                        total_realized_profit += realized_profit
+                        
                         history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '풍차매도', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': sell_amount, '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
                         total_shares = 0
                         avg_buy_price = 0.0 # 스왑 시 평단가 초기화
@@ -524,6 +531,11 @@ if st.session_state.show_settings:
                                 
                                 if min_diff >= 5:
                                     sell_amount = total_shares * price
+                                    
+                                    # 💡 실현 손익 누적 (수익 회전 매도 시)
+                                    realized_profit = sell_amount - (total_shares * avg_buy_price)
+                                    total_realized_profit += realized_profit
+                                    
                                     pt_percent_str = f"{int(pt_val*100)}%"
                                     history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': f'🎯수익실현({pt_percent_str})', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': float(sell_amount), '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
                                     
@@ -564,7 +576,9 @@ if st.session_state.show_settings:
                     prev_m_asset = m_data['end_asset']
                 
                 real_total_asset = last_eval_asset + total_withdrawn
-                all_sim_data[t_key] = {'name': target['name'], 'summary': summary, 'history': history, 'monthly_summary': monthly_list, 'chart_values': [asset_by_date.get(lbl, INITIAL_CASH) for lbl in chart_labels], 'final_asset': last_eval_asset, 'div_action': div_action_input, 'initial_cash': INITIAL_CASH, 'total_dividend': total_dividend, 'total_withdrawn': total_withdrawn, 'total_profit': real_total_asset - INITIAL_CASH, 'profit_rate': ((real_total_asset / INITIAL_CASH) - 1) * 100}
+                
+                # 💡 시뮬레이션 결과 딕셔너리에 '매매 차익(total_realized_profit)' 변수 추가 저장
+                all_sim_data[t_key] = {'name': target['name'], 'summary': summary, 'history': history, 'monthly_summary': monthly_list, 'chart_values': [asset_by_date.get(lbl, INITIAL_CASH) for lbl in chart_labels], 'final_asset': last_eval_asset, 'div_action': div_action_input, 'initial_cash': INITIAL_CASH, 'total_dividend': total_dividend, 'total_realized_profit': total_realized_profit, 'total_withdrawn': total_withdrawn, 'total_profit': real_total_asset - INITIAL_CASH, 'profit_rate': ((real_total_asset / INITIAL_CASH) - 1) * 100}
 
             st.session_state.sim_result_data = {'initial_cash': INITIAL_CASH, 'compare_keys': [k for k in compare_keys if k in all_sim_data], 'labels': chart_labels, 'all_data': all_sim_data}
             st.session_state.run_clicked, st.session_state.show_settings = True, False
@@ -581,7 +595,6 @@ if st.session_state.run_clicked and not st.session_state.show_settings and st.se
         d = res['all_data'][k]
         datasets.append({'label': d['name'], 'data': d['chart_values'], 'borderColor': colors[idx % len(colors)], 'backgroundColor': colors[idx % len(colors)], 'tension': 0.3, 'fill': False, 'borderWidth': 3})
 
-    # 💡 [핵심 추가] 자바스크립트 내에 removeCard 로직 및 X 버튼 UI 추가
     html_code = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -663,12 +676,18 @@ if st.session_state.run_clicked and not st.session_state.show_settings and st.se
             }}
             document.getElementById('stat-cards').innerHTML = activeKeys.map((key, i) => {{
                 const item = data[key]; const isWithdrawal = item.div_action === '인출(생활비)';
-                const origIndex = keys.indexOf(key); // 삭제되더라도 고유 색상 유지
+                const origIndex = keys.indexOf(key);
+                
+                // 💡 카드 UI에 '누적 매매차익' 렌더링 (0원이면 회색, 이익이면 빨간색, 손실이면 파란색)
+                const realizedColor = item.total_realized_profit > 0 ? '#dc2626' : (item.total_realized_profit < 0 ? '#2563eb' : '#475569');
+                const realizedSign = item.total_realized_profit > 0 ? '+' : '';
+                
                 return `<div class="card" id="card-${{i}}" onclick="selectItem(${{i}})" style="border-top-color: ${{colors[origIndex % colors.length]}};">
                     <span class="close-btn" onclick="removeCard(${{i}}, event)">&times;</span>
                     <h3>${{item.name}}</h3>
                     <div class="card-row"><span>초기 투자금</span><strong>${{fmt(item.initial_cash)}}</strong></div>
                     <div class="card-row"><span>총 배당금</span><span style="color:#d97706; font-weight:600;">+${{fmt(item.total_dividend)}}</span></div>
+                    <div class="card-row"><span>누적 매매차익</span><span style="color:${{realizedColor}}; font-weight:600;">${{realizedSign}}${{fmt(item.total_realized_profit)}}</span></div>
                     <div class="card-row"><span>${{isWithdrawal?'평가 자산':'최종 자산'}}</span><strong>${{fmt(item.final_asset)}}</strong></div>
                     <div class="card-row"><span>총 수익금</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${{fmt(item.total_profit)}} (${{item.profit_rate.toFixed(2)}}%)</span></div>
                 </div>`;
@@ -684,13 +703,10 @@ if st.session_state.run_clicked and not st.session_state.show_settings and st.se
         }}
 
         function removeCard(index, event) {{
-            event.stopPropagation(); // 카드 클릭(선택) 이벤트 방지
-            
-            // 데이터 배열에서 해당 항목 제거
+            event.stopPropagation(); 
             activeKeys.splice(index, 1);
             activeDatasets.splice(index, 1);
             
-            // 모두 삭제된 경우 UI 초기화
             if (activeKeys.length === 0) {{
                 chartInstance.data.datasets = [];
                 chartInstance.update();
@@ -701,18 +717,14 @@ if st.session_state.run_clicked and not st.session_state.show_settings and st.se
                 return;
             }}
             
-            // 선택 중이던 카드가 삭제된 경우 인덱스 조정
             if (currentIndex === index) {{
                 currentIndex = Math.min(currentIndex, activeKeys.length - 1);
             }} else if (currentIndex > index) {{
                 currentIndex--;
             }}
             
-            // 차트 갱신
             chartInstance.data.datasets = activeDatasets;
             chartInstance.update();
-            
-            // UI 재렌더링
             renderCards();
             renderDropdown();
             selectItem(currentIndex);
