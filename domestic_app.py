@@ -32,7 +32,7 @@ if 'last_inputs' not in st.session_state:
         'etf': "498400, 472150, 498400 + 472150",
         'strat': ["거치식 (일괄 매수)"],
         'strat_wm': ["일괄 매수"],
-        'use_5pct': False
+        'rot': ["기본 (적용 안함)", "3% 수익 회전", "5% 수익 회전"]
     }
 
 if 'saved_cash' not in st.session_state: st.session_state.saved_cash = st.session_state.last_inputs['cash']
@@ -41,7 +41,7 @@ if 'saved_div_action' not in st.session_state: st.session_state.saved_div_action
 if 'saved_etf' not in st.session_state: st.session_state.saved_etf = st.session_state.last_inputs['etf']
 if 'saved_strategy' not in st.session_state: st.session_state.saved_strategy = st.session_state.last_inputs['strat']
 if 'saved_strategy_wm' not in st.session_state: st.session_state.saved_strategy_wm = st.session_state.last_inputs['strat_wm']
-if 'saved_5pct' not in st.session_state: st.session_state.saved_5pct = st.session_state.last_inputs['use_5pct']
+if 'saved_rot' not in st.session_state: st.session_state.saved_rot = st.session_state.last_inputs['rot']
 
 # ==========================================
 # 종목 데이터 마스터 적재 (캐싱)
@@ -230,8 +230,12 @@ if st.session_state.show_settings:
             )
             
         st.write("")
-        # 💡 스크린샷과 동일한 위치에 공통 적용 옵션으로 재배치
-        use_5pct_input = st.checkbox("🎯 5% 수익 도달 시 매도 후 다음 날 재매수 (단, 배당락일 ±5일 방어)", key="saved_5pct")
+        # 💡 [핵심 추가] 3%와 5% 등 다중 선택 비교를 위한 멀티 셀렉트 박스
+        rot_options_input = st.multiselect(
+            "🎯 목표 수익 달성 시 익일 재매수 (복수 선택 시 차트에 동시 비교됨, 배당락일 ±5일 방어)",
+            ["기본 (적용 안함)", "3% 수익 회전", "5% 수익 회전", "7% 수익 회전", "10% 수익 회전"],
+            key="saved_rot"
+        )
             
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
         
@@ -264,7 +268,7 @@ if st.session_state.show_settings:
         st.session_state.last_inputs = {
             'cash': cash_input, 'period': period_input, 'div': div_action_input,
             'etf': etf_input, 'strat': strategy_options, 'strat_wm': strategy_options_wm,
-            'use_5pct': use_5pct_input
+            'rot': rot_options_input
         }
 
         with st.spinner('데이터 통합 분석 중...'):
@@ -272,7 +276,6 @@ if st.session_state.show_settings:
             clean_cash = re.sub(r'[^0-9.]', '', safe_cash)
             INITIAL_CASH = float(clean_cash) if clean_cash else 5000000.0
             
-            use_5pct = use_5pct_input
             safe_period = period_input if period_input and period_input.strip() else "2025.1~2026.4"
             safe_etf = etf_input if etf_input and etf_input.strip() else "498400, 472150, 498400 + 472150"
             
@@ -297,18 +300,28 @@ if st.session_state.show_settings:
             
             strats_single = strategy_options if strategy_options else ["거치식 (일괄 매수)"]
             strats_wm = strategy_options_wm if strategy_options_wm else ["일괄 매수"]
+            rot_opts = rot_options_input if rot_options_input else ["기본 (적용 안함)"]
 
+            # 💡 [핵심 추가] 선택된 여러 회전 옵션(기본, 3%, 5%)을 기반으로 시뮬레이션 타겟을 복제(Explode)하여 동시 비교
             for t in raw_target_strs:
-                if '+' in t:
-                    for strat in strats_wm:
-                        key = f"{t}_{strat}"
-                        targets.append({'key': key, 'ticker': t, 'strategy': strat, 'name': f"풍차({t}) - {strat}"})
-                        compare_keys.append(key)
-                else:
-                    for strat in strats_single:
-                        key = f"{t}_{strat}"
-                        targets.append({'key': key, 'ticker': t, 'strategy': strat, 'name': f"{get_stock_info(t)} ({strat})"})
-                        compare_keys.append(key)
+                for rot in rot_opts:
+                    pt_val = 0.0
+                    pt_suffix = ""
+                    if "3%" in rot: pt_val = 0.03; pt_suffix = " [3%회전]"
+                    elif "5%" in rot: pt_val = 0.05; pt_suffix = " [5%회전]"
+                    elif "7%" in rot: pt_val = 0.07; pt_suffix = " [7%회전]"
+                    elif "10%" in rot: pt_val = 0.10; pt_suffix = " [10%회전]"
+                    
+                    if '+' in t:
+                        for strat in strats_wm:
+                            key = f"{t}_{strat}_{pt_val}"
+                            targets.append({'key': key, 'ticker': t, 'strategy': strat, 'pt_val': pt_val, 'name': f"풍차({t}) - {strat}{pt_suffix}"})
+                            compare_keys.append(key)
+                    else:
+                        for strat in strats_single:
+                            key = f"{t}_{strat}_{pt_val}"
+                            targets.append({'key': key, 'ticker': t, 'strategy': strat, 'pt_val': pt_val, 'name': f"{get_stock_info(t)} ({strat}){pt_suffix}"})
+                            compare_keys.append(key)
 
             all_tickers_needed = set()
             for target in targets:
@@ -338,6 +351,7 @@ if st.session_state.show_settings:
                 t_tickers = [tk.strip() for tk in target['ticker'].split('+') if tk.strip()]
                 is_windmill = len(t_tickers) > 1
                 strat = target['strategy']
+                pt_val = target.get('pt_val', 0.0) # 현재 시뮬레이션 중인 타겟의 수익 목표율
                 
                 is_windmill_split = is_windmill and strat in ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"]
                 
@@ -485,7 +499,7 @@ if st.session_state.show_settings:
                                 history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash), '총자산': float(reserve_cash + available_cash + (total_shares * price))})
                         reinvest_flag = False
 
-                    # 매수 로직 3: 전날 5% 수익 확정 후, 오늘 전액 '재매수' (모든 전략 공통 적용)
+                    # 매수 로직 3: 전날 n% 수익 확정 후, 오늘 전액 '재매수' (모든 전략 공통 적용)
                     if pending_profit_reinvest and not pd.isna(price):
                         if available_cash >= price:
                             shares_to_buy = int(available_cash // price)
@@ -499,11 +513,11 @@ if st.session_state.show_settings:
                         # 현금이 모자라든 남았든 예약 상태는 해제
                         pending_profit_reinvest = False
 
-                    # 🎯 5% 도달 시 매도 로직 (단일/배당풍차/적립식 모두 통합 적용)
-                    if use_5pct:
+                    # 🎯 선택한 목표 수익(pt_val) 도달 시 매도 로직 (단일/배당풍차/적립식 모두 통합 적용)
+                    if pt_val > 0.0:
                         if total_shares > 0 and avg_buy_price > 0:
                             current_return = (price - avg_buy_price) / avg_buy_price
-                            if current_return >= 0.05:
+                            if current_return >= pt_val:
                                 # 배당락일 5일 전후 방어 로직 (배당금 수령 보장)
                                 b_div_series = processed_data[current_ticker][1]
                                 div_dates = b_div_series[b_div_series > 0].index
@@ -512,7 +526,8 @@ if st.session_state.show_settings:
                                 # 배당락일과 5일 이상 차이가 날 때만 안전하게 수익 실현
                                 if min_diff >= 5:
                                     sell_amount = total_shares * price
-                                    history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '🎯수익실현(5%)', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': float(sell_amount), '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
+                                    pt_percent_str = f"{int(pt_val*100)}%"
+                                    history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': f'🎯수익실현({pt_percent_str})', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': float(sell_amount), '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
                                     
                                     available_cash += sell_amount # 어떤 전략이든 통합 현금으로 보관
                                     total_shares = 0
@@ -552,7 +567,8 @@ if st.session_state.show_settings:
 if st.session_state.run_clicked and not st.session_state.show_settings and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
     datasets = []
-    colors = ['#C62828', '#1565C0', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#AD1457', '#9E9D24', '#4527A0', '#00695C']
+    # 💡 다중 비교를 위해 색상 배열을 더 풍성하게 준비
+    colors = ['#C62828', '#1565C0', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#AD1457', '#9E9D24', '#4527A0', '#00695C', '#D84315', '#0277BD', '#558B2F', '#4527A0', '#F9A825']
     for idx, k in enumerate(res['compare_keys']):
         d = res['all_data'][k]
         datasets.append({'label': d['name'], 'data': d['chart_values'], 'borderColor': colors[idx % len(colors)], 'backgroundColor': colors[idx % len(colors)], 'tension': 0.3, 'fill': False, 'borderWidth': 3})
