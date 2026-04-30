@@ -230,7 +230,6 @@ if st.session_state.show_settings:
             )
             
         st.write("")
-        # 💡 [핵심 추가] 3%와 5% 등 다중 선택 비교를 위한 멀티 셀렉트 박스
         rot_options_input = st.multiselect(
             "🎯 목표 수익 달성 시 익일 재매수 (복수 선택 시 차트에 동시 비교됨, 배당락일 ±5일 방어)",
             ["기본 (적용 안함)", "3% 수익 회전", "5% 수익 회전", "7% 수익 회전", "10% 수익 회전"],
@@ -302,7 +301,6 @@ if st.session_state.show_settings:
             strats_wm = strategy_options_wm if strategy_options_wm else ["일괄 매수"]
             rot_opts = rot_options_input if rot_options_input else ["기본 (적용 안함)"]
 
-            # 💡 [핵심 추가] 선택된 여러 회전 옵션(기본, 3%, 5%)을 기반으로 시뮬레이션 타겟을 복제(Explode)하여 동시 비교
             for t in raw_target_strs:
                 for rot in rot_opts:
                     pt_val = 0.0
@@ -351,7 +349,7 @@ if st.session_state.show_settings:
                 t_tickers = [tk.strip() for tk in target['ticker'].split('+') if tk.strip()]
                 is_windmill = len(t_tickers) > 1
                 strat = target['strategy']
-                pt_val = target.get('pt_val', 0.0) # 현재 시뮬레이션 중인 타겟의 수익 목표율
+                pt_val = target.get('pt_val', 0.0)
                 
                 is_windmill_split = is_windmill and strat in ["일괄 매수", "분할 매수 (4분할)", "분할 매수 (6분할)"]
                 
@@ -423,8 +421,12 @@ if st.session_state.show_settings:
                         current_idx = (current_idx + 1) % len(t_tickers)
                         current_ticker = t_tickers[current_idx]
                         price = processed_data[current_ticker][0][date] 
+                        
                         if is_windmill_split:
                             staged_cash += sell_amount
+                            # 💡 종목이 바뀌었으므로 이전 종목의 잔여 스케줄 무조건 초기화
+                            keys_to_remove = [k for k in scheduled_buys.keys() if k > date]
+                            for k in keys_to_remove: del scheduled_buys[k]
                             schedule_buys(staged_cash, d_idx, current_ticker, N_splits)
                         else:
                             available_cash += sell_amount
@@ -499,8 +501,8 @@ if st.session_state.show_settings:
                                 history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash), '총자산': float(reserve_cash + available_cash + (total_shares * price))})
                         reinvest_flag = False
 
-                    # 매수 로직 3: 전날 n% 수익 확정 후, 오늘 전액 '재매수' (모든 전략 공통 적용)
-                    if pending_profit_reinvest and not pd.isna(price):
+                    # 매수 로직 3: 전날 n% 수익 확정 후, 일반 전략의 '전액 일괄 재매수'
+                    if pending_profit_reinvest and not pd.isna(price) and not is_windmill_split:
                         if available_cash >= price:
                             shares_to_buy = int(available_cash // price)
                             if shares_to_buy > 0:
@@ -510,7 +512,6 @@ if st.session_state.show_settings:
                                 else: avg_buy_price = ((total_shares * avg_buy_price) + cost) / (total_shares + shares_to_buy)
                                 total_shares += shares_to_buy
                                 history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '🔄수익확정 재매수', '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))})
-                        # 현금이 모자라든 남았든 예약 상태는 해제
                         pending_profit_reinvest = False
 
                     # 🎯 선택한 목표 수익(pt_val) 도달 시 매도 로직 (단일/배당풍차/적립식 모두 통합 적용)
@@ -529,12 +530,26 @@ if st.session_state.show_settings:
                                     pt_percent_str = f"{int(pt_val*100)}%"
                                     history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': f'🎯수익실현({pt_percent_str})', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': float(sell_amount), '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
                                     
-                                    available_cash += sell_amount # 어떤 전략이든 통합 현금으로 보관
-                                    total_shares = 0
-                                    avg_buy_price = 0.0 
-                                    
-                                    # 당일 바로 사지 않고, 다음 거래일(루프)에서 재매수하도록 플래그만 설정
-                                    pending_profit_reinvest = True
+                                    if is_windmill_split:
+                                        # 💡 핵심: 분할 매수 중 수익 실현 시, 기존 예약 올스톱 & 금액 영끌 후 재분배
+                                        staged_cash += (available_cash + sell_amount)
+                                        available_cash = 0.0
+                                        total_shares = 0
+                                        avg_buy_price = 0.0 
+                                        
+                                        keys_to_remove = [k for k in scheduled_buys.keys() if k > date]
+                                        for k in keys_to_remove:
+                                            del scheduled_buys[k]
+                                            
+                                        # 익일부터 남은 기간 동안 4/6분할 등 재배치
+                                        if d_idx + 1 < len(all_trading_dates):
+                                            schedule_buys(staged_cash, d_idx + 1, current_ticker, N_splits)
+                                    else:
+                                        # 거치식/적립식: 매도 후 익일에 일괄 매수하도록 플래그 세팅
+                                        available_cash += sell_amount 
+                                        total_shares = 0
+                                        avg_buy_price = 0.0 
+                                        pending_profit_reinvest = True
                     
                     cur_asset = float(reserve_cash + available_cash + staged_cash + (total_shares * price))
                     monthly_data[month_str]['end_asset'] = cur_asset
@@ -567,7 +582,6 @@ if st.session_state.show_settings:
 if st.session_state.run_clicked and not st.session_state.show_settings and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
     datasets = []
-    # 💡 다중 비교를 위해 색상 배열을 더 풍성하게 준비
     colors = ['#C62828', '#1565C0', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#AD1457', '#9E9D24', '#4527A0', '#00695C', '#D84315', '#0277BD', '#558B2F', '#4527A0', '#F9A825']
     for idx, k in enumerate(res['compare_keys']):
         d = res['all_data'][k]
