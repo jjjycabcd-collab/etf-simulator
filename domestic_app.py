@@ -495,7 +495,8 @@ if st.session_state.show_settings:
 # ==========================================
 # 결과 출력 영역 (인터랙션 UI)
 # ==========================================
-if st.session_state.run_clicked and st.session_state.sim_result_data:
+# 🛑 핵심 수정 부분: 'not st.session_state.show_settings' 조건을 추가하여 설정 화면일 때 HTML을 그리지 않음
+if st.session_state.run_clicked and not st.session_state.show_settings and st.session_state.sim_result_data:
     res = st.session_state.sim_result_data
     datasets = []
     # 💡 톤다운된 진한 색상 팔레트
