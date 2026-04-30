@@ -32,7 +32,7 @@ if 'last_inputs' not in st.session_state:
         'etf': "498400, 472150, 498400 + 472150",
         'strat': ["거치식 (일괄 매수)"],
         'strat_wm': ["일괄 매수"],
-        'rot': ["기본 (적용 안함)", "3% 수익 회전", "5% 수익 회전"]
+        'rot': ["기본 (적용 안함)", "3% 수익", "5% 수익"]
     }
 
 if 'saved_cash' not in st.session_state: st.session_state.saved_cash = st.session_state.last_inputs['cash']
@@ -232,18 +232,21 @@ if st.session_state.show_settings:
         st.write("")
         rot_options_input = st.multiselect(
             "🎯 목표 수익 달성 시 익일 재매수 (복수 선택 시 차트에 동시 비교됨, 배당락일 ±5일 방어)",
-            ["기본 (적용 안함)", "3% 수익 회전", "5% 수익 회전", "7% 수익 회전", "10% 수익 회전"],
+            ["기본 (적용 안함)", "3% 수익", "5% 수익", "10% 수익", "20% 수익", "30% 수익", "50% 수익"],
             key="saved_rot"
         )
             
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
         
+        # 💡 [핵심 추가] 종목 검색 Expander 클릭 시 검색창 자동 포커스 JS
         components.html(
             """
             <script>
             const doc = window.parent.document;
             if (!doc.window_enter_bound) {
                 doc.window_enter_bound = true;
+                
+                // 1. 엔터키로 실행 버튼 누르기
                 doc.addEventListener('keydown', function(e) {
                     if (e.key === 'Enter') {
                         const active = doc.activeElement;
@@ -254,6 +257,25 @@ if st.session_state.show_settings:
                         const buttons = Array.from(doc.querySelectorAll('button'));
                         const runBtn = buttons.find(b => b.innerText && b.innerText.includes('시뮬레이션 실행'));
                         if (runBtn) setTimeout(() => { runBtn.click(); }, 150);
+                    }
+                });
+                
+                // 2. 종목 검색 Expander 클릭 시 검색 입력창 자동 포커스
+                doc.addEventListener('click', function(e) {
+                    let target = e.target;
+                    while (target && target !== doc) {
+                        if (target.tagName === 'SUMMARY' && target.innerText.includes('종목 코드를 모르시나요?')) {
+                            // Expander가 열리는 애니메이션(CSS) 시간을 고려해 0.2초 딜레이
+                            setTimeout(() => {
+                                const inputs = Array.from(doc.querySelectorAll('input'));
+                                const searchInput = inputs.find(input => input.getAttribute('aria-label') && input.getAttribute('aria-label').includes('종목 검색어 입력'));
+                                if (searchInput) {
+                                    searchInput.focus();
+                                }
+                            }, 200);
+                            break;
+                        }
+                        target = target.parentNode;
                     }
                 });
             }
@@ -305,10 +327,12 @@ if st.session_state.show_settings:
                 for rot in rot_opts:
                     pt_val = 0.0
                     pt_suffix = ""
-                    if "3%" in rot: pt_val = 0.03; pt_suffix = " [3%회전]"
-                    elif "5%" in rot: pt_val = 0.05; pt_suffix = " [5%회전]"
-                    elif "7%" in rot: pt_val = 0.07; pt_suffix = " [7%회전]"
-                    elif "10%" in rot: pt_val = 0.10; pt_suffix = " [10%회전]"
+                    if "3%" in rot: pt_val = 0.03; pt_suffix = " [3% 수익]"
+                    elif "5%" in rot: pt_val = 0.05; pt_suffix = " [5% 수익]"
+                    elif "10%" in rot: pt_val = 0.10; pt_suffix = " [10% 수익]"
+                    elif "20%" in rot: pt_val = 0.20; pt_suffix = " [20% 수익]"
+                    elif "30%" in rot: pt_val = 0.30; pt_suffix = " [30% 수익]"
+                    elif "50%" in rot: pt_val = 0.50; pt_suffix = " [50% 수익]"
                     
                     if '+' in t:
                         for strat in strats_wm:
@@ -369,7 +393,7 @@ if st.session_state.show_settings:
 
                 reserve_cash, available_cash, staged_cash = (0.0, 0.0, INITIAL_CASH) if is_windmill_split else (INITIAL_CASH, 0.0, 0.0)
                 total_shares, total_withdrawn, total_dividend = 0, 0.0, 0.0 
-                total_realized_profit = 0.0  # 💡 실현된 매매 차익을 누적하는 변수 추가
+                total_realized_profit = 0.0
                 
                 history, summary, asset_by_date, monthly_data = [], [], {}, {}
                 prev_asset = INITIAL_CASH
@@ -378,7 +402,7 @@ if st.session_state.show_settings:
                 current_ticker = t_tickers[current_idx]
                 pending_dividends, scheduled_buys = {}, {}
                 
-                avg_buy_price = 0.0 # 평단가 추적용 변수
+                avg_buy_price = 0.0
 
                 def schedule_buys(amount, from_idx, target_tk, n_split):
                     if amount <= 0: return
@@ -414,17 +438,15 @@ if st.session_state.show_settings:
                     if month_str not in monthly_data:
                         monthly_data[month_str] = {'div_per_share': 0.0, 'div_total': 0.0, 'end_asset': 0.0, 'end_price': 0.0}
 
-                    # [풍차 핵심] 매도 시점을 배당락일 다음 거래일로 지연
                     if windmill_swap_pending:
                         sell_amount = total_shares * price
                         
-                        # 💡 실현 손익 누적 (풍차 스왑 매도 시)
                         realized_profit = sell_amount - (total_shares * avg_buy_price)
                         total_realized_profit += realized_profit
                         
                         history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '풍차매도', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': sell_amount, '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
                         total_shares = 0
-                        avg_buy_price = 0.0 # 스왑 시 평단가 초기화
+                        avg_buy_price = 0.0
                         current_idx = (current_idx + 1) % len(t_tickers)
                         current_ticker = t_tickers[current_idx]
                         price = processed_data[current_ticker][0][date] 
@@ -477,7 +499,6 @@ if st.session_state.show_settings:
                         reserve_cash -= (INITIAL_CASH / len(invest_dates_set))
                         available_cash += (INITIAL_CASH / len(invest_dates_set))
 
-                    # 매수 로직 1: 분할 매수 풍차의 예약된 매수
                     if is_windmill_split and date in scheduled_buys:
                         buy_cash = min(scheduled_buys[date], staged_cash)
                         if buy_cash > 0 and not pd.isna(price):
@@ -491,7 +512,6 @@ if st.session_state.show_settings:
                                 gubun_text = f'매수({N_splits}분할)' if N_splits > 1 else '일괄매수'
                                 history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))})
 
-                    # 매수 로직 2: 일반 거치식/적립식/배당재투자
                     if not is_windmill_split:
                         if (date in invest_dates_set or reinvest_flag) and not pd.isna(price) and available_cash >= price:
                             shares_to_buy = int(available_cash // price)
@@ -507,7 +527,6 @@ if st.session_state.show_settings:
                                 history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash), '총자산': float(reserve_cash + available_cash + (total_shares * price))})
                         reinvest_flag = False
 
-                    # 매수 로직 3: 전날 n% 수익 확정 후, 일반 전략의 '전액 일괄 재매수'
                     if pending_profit_reinvest and not pd.isna(price) and not is_windmill_split:
                         if available_cash >= price:
                             shares_to_buy = int(available_cash // price)
@@ -520,7 +539,6 @@ if st.session_state.show_settings:
                                 history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '🔄수익확정 재매수', '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))})
                         pending_profit_reinvest = False
 
-                    # 🎯 선택한 목표 수익(pt_val) 도달 시 매도 로직
                     if pt_val > 0.0:
                         if total_shares > 0 and avg_buy_price > 0:
                             current_return = (price - avg_buy_price) / avg_buy_price
@@ -532,7 +550,6 @@ if st.session_state.show_settings:
                                 if min_diff >= 5:
                                     sell_amount = total_shares * price
                                     
-                                    # 💡 실현 손익 누적 (수익 회전 매도 시)
                                     realized_profit = sell_amount - (total_shares * avg_buy_price)
                                     total_realized_profit += realized_profit
                                     
@@ -577,7 +594,6 @@ if st.session_state.show_settings:
                 
                 real_total_asset = last_eval_asset + total_withdrawn
                 
-                # 💡 시뮬레이션 결과 딕셔너리에 '매매 차익(total_realized_profit)' 변수 추가 저장
                 all_sim_data[t_key] = {'name': target['name'], 'summary': summary, 'history': history, 'monthly_summary': monthly_list, 'chart_values': [asset_by_date.get(lbl, INITIAL_CASH) for lbl in chart_labels], 'final_asset': last_eval_asset, 'div_action': div_action_input, 'initial_cash': INITIAL_CASH, 'total_dividend': total_dividend, 'total_realized_profit': total_realized_profit, 'total_withdrawn': total_withdrawn, 'total_profit': real_total_asset - INITIAL_CASH, 'profit_rate': ((real_total_asset / INITIAL_CASH) - 1) * 100}
 
             st.session_state.sim_result_data = {'initial_cash': INITIAL_CASH, 'compare_keys': [k for k in compare_keys if k in all_sim_data], 'labels': chart_labels, 'all_data': all_sim_data}
@@ -678,7 +694,6 @@ if st.session_state.run_clicked and not st.session_state.show_settings and st.se
                 const item = data[key]; const isWithdrawal = item.div_action === '인출(생활비)';
                 const origIndex = keys.indexOf(key);
                 
-                // 💡 카드 UI에 '누적 매매차익' 렌더링 (0원이면 회색, 이익이면 빨간색, 손실이면 파란색)
                 const realizedColor = item.total_realized_profit > 0 ? '#dc2626' : (item.total_realized_profit < 0 ? '#2563eb' : '#475569');
                 const realizedSign = item.total_realized_profit > 0 ? '+' : '';
                 
@@ -687,7 +702,7 @@ if st.session_state.run_clicked and not st.session_state.show_settings and st.se
                     <h3>${{item.name}}</h3>
                     <div class="card-row"><span>초기 투자금</span><strong>${{fmt(item.initial_cash)}}</strong></div>
                     <div class="card-row"><span>총 배당금</span><span style="color:#d97706; font-weight:600;">+${{fmt(item.total_dividend)}}</span></div>
-                    <div class="card-row"><span>누적 매매차익</span><span style="color:${{realizedColor}}; font-weight:600;">${{realizedSign}}${{fmt(item.total_realized_profit)}}</span></div>
+                    <div class="card-row"><span>총 매매차익</span><span style="color:${{realizedColor}}; font-weight:600;">${{realizedSign}}${{fmt(item.total_realized_profit)}}</span></div>
                     <div class="card-row"><span>${{isWithdrawal?'평가 자산':'최종 자산'}}</span><strong>${{fmt(item.final_asset)}}</strong></div>
                     <div class="card-row"><span>총 수익금</span><span style="color:${{item.total_profit>=0?'#dc2626':'#2563eb'}}; font-weight:600;">${{item.total_profit>=0?'+':''}}${{fmt(item.total_profit)}} (${{item.profit_rate.toFixed(2)}}%)</span></div>
                 </div>`;
