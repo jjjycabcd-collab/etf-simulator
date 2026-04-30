@@ -219,7 +219,6 @@ if st.session_state.show_settings:
                 ["거치식 (일괄 매수)", "적립식 (매일)", "적립식 (매주)", "적립식 (매월)"],
                 key="saved_strategy"
             )
-            use_5pct_input = st.checkbox("🎯 5% 수익 도달 시 매도 후 다음 날 재매수 (단, 배당락일 ±5일 방어)", key="saved_5pct")
             
         with col4:
             has_wm = '+' in etf_input
@@ -229,6 +228,10 @@ if st.session_state.show_settings:
                 key="saved_strategy_wm",
                 disabled=not has_wm
             )
+            
+        st.write("")
+        # 💡 스크린샷과 동일한 위치에 공통 적용 옵션으로 재배치
+        use_5pct_input = st.checkbox("🎯 5% 수익 도달 시 매도 후 다음 날 재매수 (단, 배당락일 ±5일 방어)", key="saved_5pct")
             
         run_btn = st.button("🚀 시뮬레이션 실행", type="primary", use_container_width=True)
         
@@ -402,6 +405,7 @@ if st.session_state.show_settings:
                         sell_amount = total_shares * price
                         history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '풍차매도', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': sell_amount, '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
                         total_shares = 0
+                        avg_buy_price = 0.0 # 스왑 시 평단가 초기화
                         current_idx = (current_idx + 1) % len(t_tickers)
                         current_ticker = t_tickers[current_idx]
                         price = processed_data[current_ticker][0][date] 
@@ -451,42 +455,52 @@ if st.session_state.show_settings:
                         reserve_cash -= (INITIAL_CASH / len(invest_dates_set))
                         available_cash += (INITIAL_CASH / len(invest_dates_set))
 
-                    if is_windmill_split:
-                        if date in scheduled_buys:
-                            buy_cash = min(scheduled_buys[date], staged_cash)
-                            if buy_cash > 0 and not pd.isna(price):
-                                shares_to_buy = int(buy_cash // price)
-                                if shares_to_buy > 0:
-                                    cost = shares_to_buy * price
-                                    staged_cash -= cost
-                                    total_shares += shares_to_buy
-                                    gubun_text = f'매수({N_splits}분할)' if N_splits > 1 else '일괄매수'
-                                    history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))})
-                    else:
-                        # 일반 매수, 배당재투자, 또는 전일 5% 수익 실현으로 인한 익일 재매수 처리
-                        if (date in invest_dates_set or reinvest_flag or pending_profit_reinvest) and not pd.isna(price) and available_cash >= price:
+                    # 매수 로직 1: 분할 매수 풍차의 예약된 매수
+                    if is_windmill_split and date in scheduled_buys:
+                        buy_cash = min(scheduled_buys[date], staged_cash)
+                        if buy_cash > 0 and not pd.isna(price):
+                            shares_to_buy = int(buy_cash // price)
+                            if shares_to_buy > 0:
+                                cost = shares_to_buy * price
+                                staged_cash -= cost
+                                if total_shares == 0: avg_buy_price = price
+                                else: avg_buy_price = ((total_shares * avg_buy_price) + cost) / (total_shares + shares_to_buy)
+                                total_shares += shares_to_buy
+                                gubun_text = f'매수({N_splits}분할)' if N_splits > 1 else '일괄매수'
+                                history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))})
+
+                    # 매수 로직 2: 일반 거치식/적립식/배당재투자
+                    if not is_windmill_split:
+                        if (date in invest_dates_set or reinvest_flag) and not pd.isna(price) and available_cash >= price:
                             shares_to_buy = int(available_cash // price)
                             if shares_to_buy > 0:
                                 cost = shares_to_buy * price
-                                # 매수 시 평단가 업데이트
+                                available_cash -= cost
                                 if total_shares == 0: avg_buy_price = price
                                 else: avg_buy_price = ((total_shares * avg_buy_price) + cost) / (total_shares + shares_to_buy)
-                                
-                                available_cash -= cost
                                 total_shares += shares_to_buy
-                                
                                 gubun_text = '매수'
-                                if pending_profit_reinvest: gubun_text = '🔄수익확정 재매수'
-                                elif reinvest_flag and date not in invest_dates_set: gubun_text = '배당재투자'
+                                if reinvest_flag and date not in invest_dates_set: gubun_text = '배당재투자'
                                 elif reinvest_flag and date in invest_dates_set: gubun_text = '매수+재투자'
-                                
                                 history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': gubun_text, '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash), '총자산': float(reserve_cash + available_cash + (total_shares * price))})
-                        
                         reinvest_flag = False
-                        pending_profit_reinvest = False # 플래그 초기화
 
-                    # 🎯 5% 도달 시 매도 로직 (거치식 전용 + 배당락일 방어 추가 + 시차 적용)
-                    if not is_windmill_split and strat == "거치식 (일괄 매수)" and use_5pct:
+                    # 매수 로직 3: 전날 5% 수익 확정 후, 오늘 전액 '재매수' (모든 전략 공통 적용)
+                    if pending_profit_reinvest and not pd.isna(price):
+                        if available_cash >= price:
+                            shares_to_buy = int(available_cash // price)
+                            if shares_to_buy > 0:
+                                cost = shares_to_buy * price
+                                available_cash -= cost
+                                if total_shares == 0: avg_buy_price = price
+                                else: avg_buy_price = ((total_shares * avg_buy_price) + cost) / (total_shares + shares_to_buy)
+                                total_shares += shares_to_buy
+                                history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '🔄수익확정 재매수', '종목': current_ticker, '단가': float(price), '수량': shares_to_buy, '거래금액': float(cost), '현금잔고': float(reserve_cash + available_cash + staged_cash), '총자산': float(reserve_cash + available_cash + staged_cash + (total_shares * price))})
+                        # 현금이 모자라든 남았든 예약 상태는 해제
+                        pending_profit_reinvest = False
+
+                    # 🎯 5% 도달 시 매도 로직 (단일/배당풍차/적립식 모두 통합 적용)
+                    if use_5pct:
                         if total_shares > 0 and avg_buy_price > 0:
                             current_return = (price - avg_buy_price) / avg_buy_price
                             if current_return >= 0.05:
@@ -495,15 +509,16 @@ if st.session_state.show_settings:
                                 div_dates = b_div_series[b_div_series > 0].index
                                 min_diff = min([abs((d - date).days) for d in div_dates]) if len(div_dates) > 0 else 999
                                 
-                                # 배당락일과 5일 이상 차이가 날 때만 매도 진행
+                                # 배당락일과 5일 이상 차이가 날 때만 안전하게 수익 실현
                                 if min_diff >= 5:
                                     sell_amount = total_shares * price
                                     history.append({'날짜': date.strftime('%Y/%m/%d'), '구분': '🎯수익실현(5%)', '종목': current_ticker, '단가': float(price), '수량': int(total_shares), '거래금액': float(sell_amount), '현금잔고': float(reserve_cash + available_cash + staged_cash + sell_amount), '총자산': float(reserve_cash + available_cash + staged_cash + sell_amount)})
-                                    available_cash += sell_amount
+                                    
+                                    available_cash += sell_amount # 어떤 전략이든 통합 현금으로 보관
                                     total_shares = 0
                                     avg_buy_price = 0.0 
                                     
-                                    # 당일 재매수하지 않고, 다음 루프(익일 거래일)에서 재매수하도록 플래그만 설정
+                                    # 당일 바로 사지 않고, 다음 거래일(루프)에서 재매수하도록 플래그만 설정
                                     pending_profit_reinvest = True
                     
                     cur_asset = float(reserve_cash + available_cash + staged_cash + (total_shares * price))
