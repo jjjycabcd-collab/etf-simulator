@@ -1,9 +1,5 @@
-streamlit==1.28.0
+streamlit==1.32.0
 streamlit-drawable-canvas==0.9.3
-PyMuPDF
-pandas
-requests
-beautifulsoup4
-selenium
-webdriver-manager
-yfinance
+PyMuPDF==1.23.21
+pandas==2.2.1
+Pillow==10.2.0
