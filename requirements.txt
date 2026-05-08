@@ -5,3 +5,6 @@ beautifulsoup4
 selenium
 webdriver-manager
 yfinance
+PyMuPDF
+streamlit-drawable-canvas
+Pillow
