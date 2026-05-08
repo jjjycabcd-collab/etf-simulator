@@ -6,7 +6,7 @@ from PIL import Image
 import io
 from streamlit_drawable_canvas import st_canvas
 
-# 페이지 기본 설정 (넓게 쓰기)
+# 페이지 기본 설정 (넓게 쓰기) 
 st.set_page_config(page_title="SI 데이터 구축 엔진 (Web)", layout="wide")
 
 # 세션 상태 초기화
