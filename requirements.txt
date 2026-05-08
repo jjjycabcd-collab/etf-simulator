@@ -1,10 +1,10 @@
-streamlit
+streamlit==1.31.0
+streamlit-drawable-canvas==0.9.3
+PyMuPDF
 pandas
 requests
 beautifulsoup4
 selenium
 webdriver-manager
 yfinance
-PyMuPDF
-streamlit-drawable-canvas
 Pillow
